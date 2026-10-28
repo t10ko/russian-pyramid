@@ -24,6 +24,58 @@ export class Aim {
     return [Math.cos(r), Math.sin(r)];
   }
 
+  // Compute 3D cue stick endpoints for a ball at `cueXY` (radius `R`) with
+  // cue angles/spin `{phi, theta, a, b, V0}` and pullback distance `pull`
+  // (pass `pull = 0` for the impact position during shot playback/replay).
+  stickGeometry(cueXY, {
+    phi = this.phi,
+    theta = this.theta,
+    a = this.a,
+    b = this.b,
+    V0 = this.V0,
+  } = {}, pull = null) {
+    const R = this.ballR;
+    const phiRad = deg2rad(phi);
+    const thetaRad = deg2rad(theta);
+    const d = [Math.cos(phiRad), Math.sin(phiRad)];
+    // Unit vector to the right of the shot line in the 3D view (matches +a in pooltool)
+    const s = [-d[1], d[0]];
+
+    const ca = Math.max(-MAX_SPIN_R, Math.min(MAX_SPIN_R, a || 0));
+    const cb = Math.max(-MAX_SPIN_R, Math.min(MAX_SPIN_R, b || 0));
+    const c = Math.sqrt(Math.max(0, 1 - ca * ca - cb * cb));
+
+    const cosT = Math.cos(thetaRad);
+    const sinT = Math.sin(thetaRad);
+
+    // Contact point on the cue ball's spherical surface relative to ball center,
+    // rotated by elevation theta around the horizontal side axis `s`.
+    const sideOffset = R * ca;
+    const backContact = R * (c * cosT - cb * sinT);
+    const upContact = R * (c * sinT + cb * cosT);
+
+    const pullDist = pull !== null ? pull : (0.04 + 0.022 * V0);
+    const stickLen = 1.45;
+    const backTip = backContact + pullDist * cosT;
+    const backButt = backTip + stickLen * cosT;
+
+    const sideX = s[0] * sideOffset;
+    const sideY = s[1] * sideOffset;
+
+    const tip = [
+      cueXY[0] + sideX - d[0] * backTip,
+      cueXY[1] + sideY - d[1] * backTip,
+    ];
+    const butt = [
+      cueXY[0] + sideX - d[0] * backButt,
+      cueXY[1] + sideY - d[1] * backButt,
+    ];
+    const tipZ = Math.max(0.006, R + upContact + pullDist * sinT);
+    const buttZ = Math.max(0.013, tipZ + stickLen * sinT);
+
+    return { tip, butt, tipZ, buttZ };
+  }
+
   // Geometry of the shot from the cue ball: first ball contact (ghost ball)
   // or cushion.  Returns everything render.js needs.
   preview(cueXY, balls) {
@@ -72,11 +124,8 @@ export class Aim {
       objDir = [ox / n, oy / n];
     }
 
-    // cue stick: behind the ball, pull-back scales with power
-    const pull = 0.04 + 0.022 * this.V0;
-    const stickLen = 1.45;
-    const tip = [p[0] - d[0] * (R + pull), p[1] - d[1] * (R + pull)];
-    const butt = [tip[0] - d[0] * stickLen, tip[1] - d[1] * stickLen];
+    // cue stick: shifted in parallel by (a, b), elevated by theta, pulled back by V0
+    const stick = this.stickGeometry(p);
 
     return {
       cue: p,
@@ -86,7 +135,7 @@ export class Aim {
       objDir,
       objBall,
       ballR: R,
-      stick: { tip, butt },
+      stick,
     };
   }
 }
