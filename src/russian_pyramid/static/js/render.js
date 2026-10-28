@@ -227,7 +227,7 @@ export class Renderer {
       this.drawBall(g, view, b, scene);
     }
 
-    if (scene.aim && !scene.playing) this.drawAim(g, scene, view);
+    if (scene.aim) this.drawAim(g, scene, view);
     if (scene.assist && !scene.playing) this.drawAssist(g, scene, view);
   }
 
@@ -281,19 +281,21 @@ export class Renderer {
   }
 
   drawAim(g, scene, view) {
-    const { cue, lineEnd } = scene.aim;
+    const { cue, lineEnd, showLine } = scene.aim;
     if (!cue) return;
 
     // cue line
-    g.save();
-    g.setLineDash([view.m(0.05), view.m(0.035)]);
-    g.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-    g.lineWidth = Math.max(1.2, view.m(0.004));
-    g.beginPath();
-    g.moveTo(view.cx(cue[1], cue[0]), view.cy(cue[1], cue[0]));
-    g.lineTo(view.cx(lineEnd[1], lineEnd[0]), view.cy(lineEnd[1], lineEnd[0]));
-    g.stroke();
-    g.restore();
+    if (showLine !== false && lineEnd) {
+      g.save();
+      g.setLineDash([view.m(0.05), view.m(0.035)]);
+      g.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+      g.lineWidth = Math.max(1.2, view.m(0.004));
+      g.beginPath();
+      g.moveTo(view.cx(cue[1], cue[0]), view.cy(cue[1], cue[0]));
+      g.lineTo(view.cx(lineEnd[1], lineEnd[0]), view.cy(lineEnd[1], lineEnd[0]));
+      g.stroke();
+      g.restore();
+    }
 
     // cue stick
     const stick = scene.aim.stick;

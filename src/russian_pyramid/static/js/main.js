@@ -549,7 +549,7 @@ class App {
 
   buildScene() {
     const playing = this.playback.frames &&
-      (this.playback.playing || this.playback.time < this.playback.duration - 1e-3);
+      (this.playback.playing || this._scrubbing || this.playback.time < this.playback.duration - 1e-3);
     let balls;
     if (this.playback.frames && !this.dragPreview) {
       balls = this.playback.visualBalls(this.staticBalls(), this.pocketById(),
@@ -558,15 +558,30 @@ class App {
       balls = this.staticBalls();
     }
     const cue = balls.find((b) => b.isCue && !b.hidden);
+    let aim = null;
+    if (cue && !playing && this.mode === 'aim') {
+      aim = {
+        ...this.aim.preview(cue.xy, this.staticBalls()),
+        ...this.aim.params(),
+        showLine: true,
+        showSpin: true,
+      };
+    } else if (playing && this.playback.shotCue) {
+      const sc = this.playback.shotCue;
+      aim = {
+        cue: sc.xy,
+        ballR: this.ballRadius,
+        stick: this.aim.stickGeometry(sc.xy, sc.params, 0),
+        ...sc.params,
+        showLine: false,
+        showSpin: false,
+      };
+    }
     return {
       balls,
       playing,
       focus: this.computeFocus(balls),
-      aim: (cue && !playing && this.mode === 'aim')
-        ? { ...this.aim.preview(cue.xy, this.staticBalls()),
-            ...this.aim.params(),
-            showSpin: true }
-        : null,
+      aim,
       trails: this.playback.trailPts,
       trailsOn: $('trails').checked && !!this.playback.frames,
       ripples: this.ripples,

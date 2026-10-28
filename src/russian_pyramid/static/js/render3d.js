@@ -523,25 +523,26 @@ export class Renderer3D {
     if (!show) return;
 
     const { cue, dir: aimDir, lineEnd, stick, ballR } = aim;
-
-    const zA = Y0 + ballR;
-    const startX = aimDir ? cue[0] + aimDir[0] * (ballR + 0.004) : cue[0];
-    const startY = aimDir ? cue[1] + aimDir[1] * (ballR + 0.004) : cue[1];
-    this.aimLine.geometry.setFromPoints([
-      new THREE.Vector3(startX, zA, startY),
-      new THREE.Vector3(lineEnd[0], zA, lineEnd[1]),
-    ]);
-    this.aimLine.computeLineDistances();
-    this.aimLine.geometry.computeBoundingSphere();
+    const showLine = aim.showLine !== false && !!lineEnd;
+    this.aimLine.visible = showLine;
+    if (showLine) {
+      const zA = Y0 + ballR;
+      const startX = aimDir ? cue[0] + aimDir[0] * (ballR + 0.004) : cue[0];
+      const startY = aimDir ? cue[1] + aimDir[1] * (ballR + 0.004) : cue[1];
+      this.aimLine.geometry.setFromPoints([
+        new THREE.Vector3(startX, zA, startY),
+        new THREE.Vector3(lineEnd[0], zA, lineEnd[1]),
+      ]);
+      this.aimLine.computeLineDistances();
+      this.aimLine.geometry.computeBoundingSphere();
+    }
 
     // stick: mesh origin is its tip end, so anchor it at the TIP point and
     // aim its local +Y (tip direction) from butt toward tip
-    const theta = (aim.theta ?? 0) * Math.PI / 180;
-    const tip = new THREE.Vector3(stick.tip[0], zA, stick.tip[1]);
-    const butt = new THREE.Vector3(stick.butt[0], zA, stick.butt[1]);
-    const len = tip.distanceTo(butt) || 1;
-    butt.y += Math.sin(theta) * len;
-    tip.y += Math.sin(theta) * 0.04;
+    const tipY = Y0 + (stick.tipZ ?? ballR);
+    const buttY = Y0 + (stick.buttZ ?? ballR);
+    const tip = new THREE.Vector3(stick.tip[0], tipY, stick.tip[1]);
+    const butt = new THREE.Vector3(stick.butt[0], buttY, stick.butt[1]);
 
     const dir = tip.clone().sub(butt).normalize();   // butt -> tip (+Y local)
     this.stick.position.copy(tip);

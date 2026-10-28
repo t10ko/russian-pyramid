@@ -202,6 +202,25 @@ app.nudgePower(0.5);
 pumpFrames(3);
 
 // spin clamp check: setting spin outside MAX_SPIN_R (0.50) clamps radius to <= 0.50
+app.setAim({ a: 0, b: 0 }, false);
+const centerAim = app.buildScene().aim;
+app.setAim({ a: 0.4, b: 0.3 }, false);
+const spinAim = app.buildScene().aim;
+if (Math.hypot(spinAim.lineEnd[0] - centerAim.lineEnd[0], spinAim.lineEnd[1] - centerAim.lineEnd[1]) > 1e-6) {
+  violations.push('dashed aiming line moved when changing spin (a, b)');
+}
+const dTipX = spinAim.stick.tip[0] - centerAim.stick.tip[0];
+const dTipY = spinAim.stick.tip[1] - centerAim.stick.tip[1];
+const dButtX = spinAim.stick.butt[0] - centerAim.stick.butt[0];
+const dButtY = spinAim.stick.butt[1] - centerAim.stick.butt[1];
+if (Math.hypot(dTipX, dTipY) < 0.005 || Math.hypot(dTipX - dButtX, dTipY - dButtY) > 1e-6) {
+  violations.push('cue stick did not shift in parallel horizontally when a != 0');
+}
+if (spinAim.stick.tipZ <= centerAim.stick.tipZ + 0.005 ||
+    Math.abs((spinAim.stick.tipZ - centerAim.stick.tipZ) - (spinAim.stick.buttZ - centerAim.stick.buttZ)) > 1e-6) {
+  violations.push('cue stick did not shift in parallel vertically when b != 0');
+}
+
 app.setAim({ a: 0.9, b: 0.9 }, false);
 const spinR = Math.hypot(app.aim.a, app.aim.b);
 if (spinR > 0.501) {
@@ -215,6 +234,9 @@ await app.shoot();
 const sceneAtShotStart = app.buildScene();
 if (!sceneAtShotStart.balls.some(b => b.id === '1')) {
   violations.push('potted target ball "1" disappeared at the start of shot playback');
+}
+if (!sceneAtShotStart.aim?.stick || sceneAtShotStart.aim.showLine !== false) {
+  violations.push('cue stick missing (or dashed line not hidden) during shot playback');
 }
 app.playback.speed = 2;
 let frames = 0;
@@ -243,8 +265,11 @@ pumpFrames(2);
 app.replayLast();
 pumpFrames(10);
 
-// verify ball rotation quaternions during playback
+// verify ball rotation quaternions and visible cue stick during replay
 const sceneMid = app.buildScene();
+if (!sceneMid.aim?.stick || sceneMid.aim.showLine !== false) {
+  violations.push('cue stick not shown during replay');
+}
 for (const b of sceneMid.balls) {
   if (!b.quat || Math.abs(b.quat[3] - 1) < 1e-4) {
     violations.push(`ball ${b.id} did not rotate during playback`);
