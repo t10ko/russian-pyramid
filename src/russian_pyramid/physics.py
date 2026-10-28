@@ -85,9 +85,10 @@ def _pack(system: pt.System) -> ShotResult:
         step = 1 if len(times) <= _MAX_FRAME_COUNT else 2
         frames[bid] = {
             "t": [round(float(t), 4) for t in times[::step]],
-            "xy": [
-                [round(float(x), 4), round(float(y), 4)]
-                for x, y in zip(rvw[::step, 0, 0], rvw[::step, 0, 1], strict=False)
+            "xyz": [
+                [round(float(x), 4), round(float(y), 4), round(float(z), 4)]
+                for x, y, z in zip(
+                    rvw[::step, 0, 0], rvw[::step, 0, 1], rvw[::step, 0, 2], strict=True)
             ],
         }
 
@@ -124,7 +125,7 @@ def predict_paths(positions: dict[str, tuple[float, float]], cue_params: dict,
     result = simulate(positions, cue_params, physics_preset)
     paths = {
         bid: {"t": f["t"][_PREDICT_STEP::_PREDICT_STEP],
-              "xy": f["xy"][_PREDICT_STEP::_PREDICT_STEP]}
+              "xyz": f["xyz"][_PREDICT_STEP::_PREDICT_STEP]}
         for bid, f in result.frames.items()
     }
     return {"paths": paths, "potted": result.potted, "duration": result.duration}

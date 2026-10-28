@@ -3,16 +3,25 @@
 import { api } from './api.js';
 import { View } from './geometry.js';
 import { Renderer } from './render.js';
+import { Renderer3D } from './render3d.js';
 import { Aim, SpinPad } from './aim.js';
 import { Playback } from './playback.js';
 import { Interact } from './interact.js';
 import { $, hideBanner, renderAttempts, setHint, showBanner, toast, updateStats } from './ui.js';
 
+const store = {
+  get(key, fallback) {
+    try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, value); } catch { /* private mode */ }
+  },
+};
+
 class App {
   constructor() {
     this.state = null;
     this.view = null;
-    this.renderer = new Renderer($('table'));
     this.playback = new Playback();
     this.mode = 'aim';
     this.assistPaths = null;
@@ -24,6 +33,30 @@ class App {
     this._predictTimer = null;
     this._aimSyncTimer = null;
     this.busy = false;
+
+    this.viewMode = globalThis.__RP_FORCE_2D__ ? '2d' : store.get('rp.view', '3d');
+    // ?view=2d|3d URL override (handy for debugging/screenshots)
+    if (typeof location !== 'undefined') {
+      const qsView = new URLSearchParams(location.search).get('view');
+      if (qsView === '2d' || qsView === '3d') this.viewMode = qsView;
+    }
+    this.orientation = store.get('rp.orientation', 'vertical');
+    this.r2d = new Renderer($('table'));
+    this.r3d = null;   // lazy: needs WebGL
+    this._applyCanvasVisibility();
+  }
+
+  get renderer() {
+    return this.viewMode === '3d' ? this.r3d : this.r2d;
+  }
+
+  activeCanvas() {
+    return this.viewMode === '3d' ? $('table3d') : $('table');
+  }
+
+  _applyCanvasVisibility() {
+    $('table').classList.toggle('hidden', this.viewMode === '3d');
+    $('table3d').classList.toggle('hidden', this.viewMode !== '3d');
   }
 
   get ballRadius() { return this.state.ball_radius; }
@@ -44,7 +77,7 @@ class App {
 
   staticBalls() {
     const balls = this.state.balls.map((b) => ({
-      id: b.id, xy: b.xy, isCue: b.is_cue, radius: this.ballRadius,
+      id: b.id, xy: b.xy, z: this.ballRadius, isCue: b.is_cue, radius: this.ballRadius,
     }));
     if (this.dragPreview) {
       const b = balls.find((x) => x.id === this.dragPreview.id);
@@ -63,8 +96,11 @@ class App {
   // ---------- boot ----------
 
   async init() {
+    this.initDone = false;
+    this.frameCount = 0;
     this.state = await api.state();
     this.view = new View(this.table);
+    this.view.orientation = this.orientation;
     this.aim = new Aim(this.table, this.ballRadius);
     this.aim.phi = this.state.aim.phi;
     this.aim.V0 = this.state.aim.V0;
@@ -72,18 +108,48 @@ class App {
     this.spinPad = new SpinPad($('spin-pad'), (a, b) => this.setAim({ a, b }));
     this.spinPad.set(this.state.aim.a, this.state.aim.b);
 
-    new Interact($('table'), this);
+    new Interact($('table-wrap'), this);
     this.wireUI();
+    this.syncToggles();
 
-    const ro = new ResizeObserver(() => this.renderer.resize(this.view));
+    if (this.viewMode === '3d') this.ensure3d();
+
+    const ro = new ResizeObserver(() => this.onResize());
     ro.observe($('table-wrap'));
-    this.renderer.resize(this.view);
+    this.onResize();
 
     this.playback.onEnd = () => this.onShotEnd();
     this.refreshUI();
     setHint('drag to aim · space to shoot · R repeats the same situation');
 
-    requestAnimationFrame((t) => this.frame(t));
+    if (typeof location !== 'undefined' &&
+        new URLSearchParams(location.search).has('autoshot')) {
+      setTimeout(() => this.shoot(), 1500);   // debug hook for screenshots
+    }
+    this.initDone = true;
+    this.frame();   // paint immediately; frame() re-registers via rAF
+  }
+
+  onResize() {
+    this.r2d.resize(this.view);
+    if (this.r3d) this.r3d.resize();
+  }
+
+  ensure3d() {
+    if (!this.r3d) {
+      try {
+        this.r3d = new Renderer3D($('table3d'), this.table, this.ballRadius);
+        this.r3d.setCamera(this.cameraPreset || 'tv');
+        this.r3d.resize();
+      } catch (err) {
+        console.error('3D renderer failed:', err);
+        toast(`3D view unavailable (${err.message}) — using 2D`, 'error', 6000);
+        this.viewMode = '2d';
+        this._applyCanvasVisibility();
+        return null;
+      }
+    }
+    return this.r3d;
   }
 
   // ---------- UI wiring ----------
@@ -119,6 +185,18 @@ class App {
       } catch (err) { toast(err.message, 'error'); }
     });
 
+    $('view-toggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (btn) this.setViewMode(btn.dataset.view);
+    });
+    $('camera-toggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (btn) this.setCameraPreset(btn.dataset.cam);
+    });
+    $('layout-toggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (btn) this.setOrientation(btn.dataset.orient);
+    });
     $('mode-toggle').addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if (btn) this.setMode(btn.dataset.mode);
@@ -135,8 +213,6 @@ class App {
     $('theta').addEventListener('input', (e) => this.setAim({ theta: +e.target.value }));
 
     $('assist').addEventListener('change', (e) => this.setAssist(e.target.checked));
-    $('trails').addEventListener('change', (e) => { /* read live in buildScene */ });
-    $('ghost').addEventListener('change', (e) => { /* read live in buildScene */ });
 
     $('pl-play').addEventListener('click', () => {
       if (this.playback.playing) this.playback.pause();
@@ -164,6 +240,42 @@ class App {
         this.spinPad.set(+btn.dataset.a, +btn.dataset.b);
       });
     });
+  }
+
+  syncToggles() {
+    for (const btn of $('view-toggle').querySelectorAll('button')) {
+      btn.classList.toggle('on', btn.dataset.view === this.viewMode);
+    }
+    for (const btn of $('layout-toggle').querySelectorAll('button')) {
+      btn.classList.toggle('on', btn.dataset.orient === this.orientation);
+    }
+    $('camera-toggle').style.display = this.viewMode === '3d' ? '' : 'none';
+  }
+
+  setViewMode(mode) {
+    if (mode === this.viewMode) return;
+    this.viewMode = mode;
+    store.set('rp.view', mode);
+    if (mode === '3d') this.ensure3d();
+    this._applyCanvasVisibility();
+    this.onResize();
+    this.syncToggles();
+  }
+
+  setOrientation(orientation) {
+    this.orientation = orientation;
+    store.set('rp.orientation', orientation);
+    this.view.orientation = orientation;
+    this.r2d.resize(this.view);
+    this.syncToggles();
+  }
+
+  setCameraPreset(preset) {
+    this.cameraPreset = preset;
+    if (this.viewMode === '3d') this.r3d?.setCamera(preset);
+    for (const btn of $('camera-toggle').querySelectorAll('button')) {
+      btn.classList.toggle('on', btn.dataset.cam === preset);
+    }
   }
 
   refreshUI() {
@@ -202,7 +314,6 @@ class App {
 
   aimAtBall(ball, exact = false) {
     const cue = this.cueXY();
-    // default: aim so the object ball is thrown along the cue->ball line
     const phi = Math.atan2(ball.xy[1] - cue[1], ball.xy[0] - cue[0]) * 180 / Math.PI;
     this.setAim({ phi: (phi + 360) % 360 });
     if (exact) toast('aimed at ball ' + ball.id);
@@ -325,7 +436,7 @@ class App {
 
   replayAttempt(n) {
     const payload = this.attemptShots.get(n);
-    if (!payload) { toast('attempt frames are gone (page was reloaded)'); return; }
+    if (!payload) { toast('attempt frames are gone (page was loaded)'); return; }
     hideBanner();
     this.ripples = [];
     this.pocketFlashes = [];
@@ -378,13 +489,14 @@ class App {
     for (const btn of $('mode-toggle').querySelectorAll('button')) {
       btn.classList.toggle('on', btn.dataset.mode === mode);
     }
-    $('table').style.cursor = mode === 'place' ? 'move' : 'crosshair';
+    $('table-wrap').style.cursor = mode === 'place' ? 'move' : 'crosshair';
     setHint(mode === 'place'
       ? 'drag balls to move · click cloth to add · right-click to remove · M to aim'
       : 'drag to aim · space to shoot · R repeats the same situation');
   }
 
   toggleMode() { this.setMode(this.mode === 'aim' ? 'place' : 'aim'); }
+
   setAssist(on) {
     $('assist').checked = on;
     if (on) this.schedulePredict();
@@ -417,7 +529,6 @@ class App {
         }
       }
     }
-    // trim finished effects
     const now = performance.now() / 1000;
     this.ripples = this.ripples.filter((r) => now - r.t0 < 0.7);
     this.pocketFlashes = this.pocketFlashes.filter((f) => now - f.t0 < 0.8);
@@ -428,8 +539,8 @@ class App {
       (this.playback.playing || this.playback.time < this.playback.duration - 1e-3);
     let balls;
     if (this.playback.frames && !this.dragPreview) {
-      balls = this.playback.visualBalls(this.staticBalls(), null,
-        this.pocketById(), performance.now() / 1000);
+      balls = this.playback.visualBalls(
+        this.staticBalls(), this.pocketById(), this.viewMode === '2d');
     } else {
       balls = this.staticBalls();
     }
@@ -453,9 +564,24 @@ class App {
   }
 
   frame() {
-    this.playback.tick();
-    this.fireEvents();
-    this.renderer.draw(this.buildScene(), this.view);
+    this.frameCount = (this.frameCount || 0) + 1;
+    try {
+      this.playback.tick();
+      this.fireEvents();
+      const scene = this.buildScene();
+      if (this.viewMode === '3d' && this.r3d) {
+        this.r3d.draw(scene);
+      } else {
+        this.r2d.draw(scene, this.view);
+      }
+    } catch (err) {
+      if (!this._frameError) {
+        this._frameError = true;
+        console.error('render loop error:', err);
+        toast(`render error: ${err.message}`, 'error', 8000);
+      }
+      // keep the loop alive; scene may recover after a view change
+    }
 
     if (this.playback.frames) {
       $('pl-scrub').disabled = false;
@@ -481,6 +607,7 @@ function nearestPocketCenter(p, app) {
 
 const app = new App();
 globalThis.__russianPyramidApp = app;  // handy in the devtools console
+(globalThis.__RP_APPS ??= []).push(app);
 app.init().catch((err) => {
   document.body.insertAdjacentHTML('afterbegin',
     `<div style="color:#e5544b;padding:20px;font-family:monospace">failed to start: ${err}</div>`);

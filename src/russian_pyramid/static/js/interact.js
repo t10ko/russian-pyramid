@@ -1,32 +1,40 @@
 // Pointer + keyboard interaction: aiming, dragging balls, shortcuts.
+// Attached to the table wrapper so it works for both the 2D and 3D
+// renderers; pointer handlers ignore events that didn't land on the active
+// canvas (banner, hints, etc.).
 
 import { angleDeg } from './geometry.js';
 
 export class Interact {
-  constructor(canvas, app) {
-    this.canvas = canvas;
+  constructor(wrapper, app) {
+    this.wrapper = wrapper;
     this.app = app;          // main.js controller
     this.dragBall = null;    // {id, offset, xy}
     this.dragAim = false;
     this.moved = false;
 
-    canvas.addEventListener('pointerdown', (e) => this.down(e));
-    canvas.addEventListener('pointermove', (e) => this.move(e));
-    canvas.addEventListener('pointerup', (e) => this.up(e));
-    canvas.addEventListener('pointercancel', () => this.cancel());
-    canvas.addEventListener('dblclick', (e) => this.dbl(e));
-    canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); this.altClick(e); });
-    canvas.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
+    wrapper.addEventListener('pointerdown', (e) => this.down(e));
+    wrapper.addEventListener('pointermove', (e) => this.move(e));
+    wrapper.addEventListener('pointerup', (e) => this.up(e));
+    wrapper.addEventListener('pointercancel', () => this.cancel());
+    wrapper.addEventListener('dblclick', (e) => this.dbl(e));
+    wrapper.addEventListener('contextmenu', (e) => { e.preventDefault(); this.altClick(e); });
+    wrapper.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
 
     window.addEventListener('keydown', (e) => this.key(e));
   }
 
-  // canvas px -> table coords
+  onCanvas(e) {
+    return e.target === this.app.activeCanvas();
+  }
+
+  // pointer event -> table coordinates (via the active renderer)
   tablePos(e) {
-    const rect = this.canvas.getBoundingClientRect();
+    const canvas = this.app.activeCanvas();
+    const rect = canvas.getBoundingClientRect();
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
-    return [this.app.view.tx(px), this.app.view.ty(py)];
+    return this.app.renderer?.tableFromClient(px, py);
   }
 
   ballAt(xy) {
@@ -41,14 +49,16 @@ export class Interact {
 
   down(e) {
     if (e.button === 2 || e.altKey) return;      // handled by contextmenu
+    if (!this.onCanvas(e)) return;
     const xy = this.tablePos(e);
+    if (!xy) return;
     this.moved = false;
     const ball = this.ballAt(xy);
 
     if (this.app.mode === 'place') {
       if (ball) {
         this.dragBall = { id: ball.id, offset: [ball.xy[0] - xy[0], ball.xy[1] - xy[1]], xy: ball.xy };
-        this.canvas.setPointerCapture(e.pointerId);
+        this.wrapper.setPointerCapture(e.pointerId);
       } else {
         this.app.addBall(xy);
       }
@@ -58,7 +68,7 @@ export class Interact {
     // aim mode: pressing anywhere starts steering the aim from the cue ball
     if (this.app.hasCue()) {
       this.dragAim = true;
-      this.canvas.setPointerCapture(e.pointerId);
+      this.wrapper.setPointerCapture(e.pointerId);
       if (ball && ball.id !== 'cue' && !this.app.nearCue(xy)) {
         this.app.aimAtBall(ball);
       }
@@ -69,6 +79,7 @@ export class Interact {
   move(e) {
     if (this.dragBall) {
       const xy = this.tablePos(e);
+      if (!xy) return;
       this.dragBall.xy = [
         xy[0] + this.dragBall.offset[0],
         xy[1] + this.dragBall.offset[1],
@@ -76,14 +87,15 @@ export class Interact {
       this.moved = true;
       this.app.onDragPreview(this.dragBall);
     } else if (this.dragAim && this.hasMovedEnough(e)) {
-      this.app.setAim({ phi: this.phiToward(this.tablePos(e)) });
+      const xy = this.tablePos(e);
+      if (xy) this.app.setAim({ phi: this.phiToward(xy) });
     }
   }
 
   hasMovedEnough(e) {
     if (!this._last) this._last = { x: e.clientX, y: e.clientY, live: false };
     const d = Math.hypot(e.clientX - this._last.x, e.clientY - this._last.y);
-    if (d > 3) { this._last.live = true; }
+    if (d > 3) this._last.live = true;
     return this._last.live;
   }
 
@@ -111,18 +123,23 @@ export class Interact {
   }
 
   dbl(e) {
-    if (this.app.mode !== 'aim') return;
-    const ball = this.ballAt(this.tablePos(e));
+    if (!this.onCanvas(e) || this.app.mode !== 'aim') return;
+    const xy = this.tablePos(e);
+    if (!xy) return;
+    const ball = this.ballAt(xy);
     if (ball && ball.id !== 'cue') this.app.aimAtBall(ball, true);
   }
 
   altClick(e) {
-    if (this.app.mode !== 'place') return;
-    const ball = this.ballAt(this.tablePos(e));
+    if (!this.onCanvas(e) || this.app.mode !== 'place') return;
+    const xy = this.tablePos(e);
+    if (!xy) return;
+    const ball = this.ballAt(xy);
     if (ball && !ball.isCue) this.app.removeBall(ball.id);
   }
 
   wheel(e) {
+    if (!this.onCanvas(e)) return;
     if (this.app.mode !== 'aim' || !this.app.hasCue()) return;
     e.preventDefault();
     const step = e.shiftKey ? 0.5 : 0.1;
@@ -140,6 +157,7 @@ export class Interact {
       case 'p': case 'P': app.replayLast(); break;
       case 'm': case 'M': app.toggleMode(); break;
       case 'a': case 'A': app.toggleAssist(); break;
+      case 'v': case 'V': app.setViewMode(app.viewMode === '3d' ? '2d' : '3d'); break;
       case 'ArrowLeft': e.preventDefault(); app.nudgeAim(coarse ? 0.5 : -0.05); break;
       case 'ArrowRight': e.preventDefault(); app.nudgeAim(coarse ? -0.5 : 0.05); break;
       case 'ArrowUp': e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); break;

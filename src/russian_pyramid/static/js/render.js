@@ -22,15 +22,28 @@ export class Renderer {
     this.layer = null;          // offscreen static table
     this.cloth = 'green';
     this.dpr = 1;
+    this.view = null;
   }
 
   resize(view) {
+    this.view = view;
     const rect = this.canvas.getBoundingClientRect();
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(rect.width * this.dpr);
     this.canvas.height = Math.round(rect.height * this.dpr);
     view.resize(rect.width, rect.height);
     this.bakeTable(view);
+  }
+
+  setOrientation(orientation, view) {
+    view.orientation = orientation;
+    this.resize(view);
+  }
+
+  // pointer (canvas-relative px) -> table (x, y); null when off-canvas
+  tableFromClient(px, py) {
+    if (!this.view) return null;
+    return this.view.fromCanvas(px, py);
   }
 
   // ----- static layer -------------------------------------------------------
@@ -329,7 +342,7 @@ export class Renderer {
     g.save();
     g.lineWidth = Math.max(1.4, view.m(0.0035));
     for (const [id, path] of Object.entries(paths)) {
-      const pts = path.xy;
+      const pts = path.xyz;
       if (!pts || pts.length < 2) continue;
       g.strokeStyle = id === 'cue' ? 'rgba(242, 201, 76, 0.6)' : 'rgba(255, 255, 255, 0.42)';
       g.setLineDash(id === 'cue' ? [] : [6, 6]);

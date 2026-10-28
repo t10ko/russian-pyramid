@@ -11,6 +11,10 @@ Not a game — a practice room.
 
 ## What's in the box
 
+- **3D view (default)** — a real perspective table you can orbit (drag) and
+  zoom (wheel), with a TV camera behind the head rail; toggle to a precise
+  top-down **2D view** (<kbd>V</kbd>), shown vertically like the real table
+  (horizontal layout also available).
 - **12-ft Russian Pyramid table** — 3.56 × 1.78 m playing surface, 74 mm
   corner mouths with straight jaws and sharp 1.5 mm horns, 82 mm side pockets.
   The rendered cushion noses, jaw arcs, and pocket circles are *the exact
@@ -20,6 +24,7 @@ Not a game — a practice room.
   follow/draw/english, elevated-cue massé).
 - **Brutal, honest pockets** — a corner accepts roughly ±0.1° of aim error
   along the bisector. Dead-center drops; a whisker off rattles in the jaws.
+  Potted balls visibly roll into the hole and drop below the cloth.
 - **Practice loop** — shoot → watch the replay (trails, cushion ripples, pot
   animations) → press <kbd>R</kbd> and the *exact* pre-shot situation returns.
   Attempt history tracks every try with its parameters and outcome.
@@ -71,10 +76,12 @@ Requires Python 3.10–3.13 on macOS (arm64 and x86_64). The underlying
 
 | Input | Action |
 | --- | --- |
-| drag on table | aim from the cue ball |
+| drag on table | aim from the cue ball (works in 3D via cloth picking) |
+| drag in 3D | orbit the camera; wheel zooms |
 | <kbd>space</kbd> | shoot |
 | <kbd>R</kbd> / <kbd>U</kbd> | repeat the same situation |
 | <kbd>P</kbd> | replay last shot |
+| <kbd>V</kbd> | toggle 3D / 2D view |
 | <kbd>←</kbd> <kbd>→</kbd> | fine aim (±0.05°, Shift = ±0.5°) |
 | <kbd>↑</kbd> <kbd>↓</kbd> / wheel | cue speed |
 | <kbd>M</kbd> | toggle Aim ⇄ Place-balls mode |
@@ -150,9 +157,12 @@ packaging/      # PyInstaller spec + macOS build script
 examples/       # pocket rattle experiment (headless pooltool demo)
 ```
 
-The frontend is dependency-free ES modules talking to a small JSON API
-(`server.py` docstring). Every shot is simulated server-side from a plain
+The frontend is dependency-free ES modules (plus a vendored
+[three.js](https://threejs.org) copy for the 3D view) talking to a small JSON
+API (`server.py` docstring). Every shot is simulated server-side from a plain
 `{ball_id: (x, y)}` layout, which is what makes undo/repeat trivial and exact.
+`node scripts/ui_smoke.mjs` runs the real frontend headlessly against a
+canvas-spec-checking stub.
 
 ## Roadmap
 

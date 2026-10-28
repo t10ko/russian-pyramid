@@ -6,6 +6,15 @@
   <title>Russian Pyramid — Practice Table</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='22' r='11' fill='%23f2c94c'/%3E%3Ccircle cx='21' cy='42' r='11' fill='%23f5efe0'/%3E%3Ccircle cx='43' cy='42' r='11' fill='%23f5efe0'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/css/app.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three.module.js",
+        "three/addons/": "/vendor/unmapped/",
+        "three/addons/controls/": "/vendor/"
+      }
+    }
+  </script>
 </head>
 <body>
   <header id="topbar">
@@ -30,6 +39,18 @@
         <span>Cushions</span>
         <select id="physics-select"></select>
       </label>
+      <div class="seg" id="view-toggle" title="switch renderer">
+        <button data-view="3d" class="on">3D</button>
+        <button data-view="2d">2D</button>
+      </div>
+      <div class="seg" id="camera-toggle" title="3D camera angle">
+        <button data-cam="tv" class="on">TV</button>
+        <button data-cam="top">Top</button>
+      </div>
+      <div class="seg" id="layout-toggle" title="table orientation (2D)">
+        <button data-orient="vertical" class="on">↕ Vertical</button>
+        <button data-orient="horizontal">↔ Horizontal</button>
+      </div>
       <div class="seg" id="mode-toggle" title="M">
         <button data-mode="aim" class="on">Aim</button>
         <button data-mode="place">Place balls</button>
@@ -44,7 +65,8 @@
 
   <main>
     <div id="table-wrap">
-      <canvas id="table"></canvas>
+      <canvas id="table3d"></canvas>
+      <canvas id="table" class="hidden"></canvas>
       <div id="banner" class="hidden"></div>
       <div id="hint" class="hint"></div>
     </div>
@@ -118,6 +140,8 @@
       <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>fine aim (Shift = coarse)</td></tr>
       <tr><td><kbd>↑</kbd> <kbd>↓</kbd> / wheel</td><td>cue speed</td></tr>
       <tr><td><kbd>M</kbd></td><td>toggle Aim / Place-balls mode</td></tr>
+      <tr><td><kbd>V</kbd></td><td>toggle 3D / 2D view</td></tr>
+      <tr><td>drag in 3D</td><td>orbit the camera (wheel = zoom)</td></tr>
       <tr><td><kbd>A</kbd></td><td>aim assist</td></tr>
       <tr><td>drag ball <small>(place mode)</small></td><td>move · click empty cloth adds a ball · right-click removes</td></tr>
       <tr><td>double-click ball <small>(aim mode)</small></td><td>aim straight at that ball</td></tr>
@@ -130,5 +154,35 @@
   </dialog>
 
   <script type="module" src="/js/main.js"></script>
+  <script>
+    // Runtime probe for headless debugging: append ?debug=1 to the URL and a
+    // green #debug-out line reports renderer/canvas/rAF status after load.
+    if (new URLSearchParams(location.search).has('debug')) {
+      setTimeout(() => {
+        const app = globalThis.__russianPyramidApp;
+        const apps = globalThis.__RP_APPS || [];
+        const out = [`apps=${apps.length}`, `viewMode=${app?.viewMode}`, `r3d=${!!app?.r3d}`,
+                     `layer=${!!app?.r2d?.layer}`, `orient=${app?.view?.orientation}`,
+                     `initDone=${app?.initDone}`, `frames=${app?.frameCount}`];
+        let raf = 0;
+        requestAnimationFrame(() => raf++);
+        setTimeout(() => {
+          out.push(`raf=${raf > 0}`);
+          const c = document.getElementById(app?.viewMode === '3d' ? 'table3d' : 'table');
+          out.push(`canvas=${c?.width}x${c?.height}`);
+          try {
+            const ctx = c.getContext('2d');
+            const d = ctx.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data;
+            out.push(`pixel=${d[0]},${d[1]},${d[2]}`);
+          } catch (e) { out.push(`pixel=ERR(${e.message})`); }
+          const el = document.createElement('pre');
+          el.id = 'debug-out';
+          el.textContent = 'DEBUG ' + out.join(' ');
+          el.style.cssText = 'position:fixed;top:0;left:0;z-index:99;color:#4f4;padding:6px;background:rgba(0,0,0,.8);font:12px monospace';
+          document.body.appendChild(el);
+        }, 2500);
+      }, 4000);
+    }
+  </script>
 </body>
 </html>

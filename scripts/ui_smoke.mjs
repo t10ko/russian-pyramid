@@ -12,6 +12,7 @@
 // Exits non-zero on any exception, spec violation, or unknown canvas method.
 
 import { readFileSync } from 'node:fs';
+import { register } from 'node:module';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
@@ -172,6 +173,11 @@ globalThis.fetch = async (path, opts) => {
 };
 
 // ---------------------------------------------------------------- drive it
+// Force the 2D renderer: the harness has no WebGL.  Register the import-map
+// equivalent so `import 'three'` resolves to the vendored copy.
+globalThis.__RP_FORCE_2D__ = true;
+register(new URL('./smoke-loader.mjs', import.meta.url));
+
 const mainUrl = pathToFileURL(new URL('../src/russian_pyramid/static/js/main.js', import.meta.url).pathname)
   .href;
 await import(mainUrl);

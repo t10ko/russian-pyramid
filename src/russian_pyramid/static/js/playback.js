@@ -1,12 +1,23 @@
 // Shot playback: interpolates packed frames, drives trails, ripples, pot
 // drops, and the scrubber.  Everything is driven by a sim-time cursor so
 // scrubbing backwards is exact.
+//
+// Pot animation: pooltool teleports a potted ball to the pocket center at
+// the capture event, which reads as "the ball disappears".  Instead we
+// animate phase A "roll into the hole" from the last free-rolling position
+// to the pocket center, then phase B "sink" (3D: drop below the cloth and
+// let the cloth occlude it; 2D: shrink and fade).
 
 import { sampleFrames } from './geometry.js';
 
+const ROLL_SPEED = 0.45;   // m/s while rolling into the hole (phase A)
+const ROLL_MAX = 0.35;     // s cap
+const SINK_TIME = 0.35;    // s to drop below the cloth (phase B)
+const SINK_DEPTH = -0.09;  // m, fully under the cloth
+
 export class Playback {
   constructor() {
-    this.frames = null;      // ball_id -> {t, xy}
+    this.frames = null;      // ball_id -> {t, xyz}
     this.events = [];
     this.pottedEvents = [];  // [{t, balls}]
     this.duration = 0;
@@ -16,7 +27,6 @@ export class Playback {
     this.onEnd = null;
     this._firedIdx = 0;
     this.trailPts = {};
-    this.trailWindow = 1.1;  // seconds of trail
     this.lastWallTime = 0;
   }
 
@@ -53,7 +63,6 @@ export class Playback {
 
   pause() { this.playing = false; }
 
-  // advance by wall clock; returns false when the shot has finished
   tick() {
     if (!this.playing || !this.frames) return false;
     const now = performance.now();
@@ -84,14 +93,11 @@ export class Playback {
     return out;
   }
 
-  eventsSince(t) {
-    return this.events.filter((e) => e.t > t);
-  }
-
   pushTrail() {
     for (const [id, f] of Object.entries(this.frames)) {
       const pos = sampleFrames(f, this.time);
       if (!pos) continue;
+      if (this.isSinking(id)) continue;          // don't trail the drop
       if (!this.trailPts[id]) this.trailPts[id] = [];
       const pts = this.trailPts[id];
       const last = pts[pts.length - 1];
@@ -102,9 +108,14 @@ export class Playback {
     }
   }
 
+  isSinking(id) {
+    const pot = this.pottedEvents.find((e) => e.balls.includes(id));
+    return pot ? this.time > pot.t + ROLL_MAX : false;
+  }
+
   rebuildTrails() {
     this.trailPts = {};
-    const t0 = Math.max(0, this.time - this.trailWindow);
+    const t0 = Math.max(0, this.time - 1.1);
     for (const [id, f] of Object.entries(this.frames)) {
       const pts = [];
       for (let t = t0; t <= this.time; t += 1 / 60) {
@@ -115,42 +126,57 @@ export class Playback {
     }
   }
 
-  // returns balls for the renderer at current time, given static info
-  visualBalls(ballsStatic, ripples, pocketById, now) {
+  // Balls for the renderer at the current time.  pocketById maps id ->
+  // {center, radius}; drop2D=true makes sinking shrink+fade (2D top-down)
+  // instead of sinking below the cloth (3D).
+  visualBalls(ballsStatic, pocketById, drop2D) {
     const positions = this.positionsAt(this.time);
-    const dropWindow = 0.45;
     const out = [];
     for (const b of ballsStatic) {
       const pos = positions[b.id];
-      if (!pos) continue;                    // ball added after this shot
-      let scale = 1, alpha = 1, hidden = false, xy = pos;
+      if (!pos) continue;                    // ball not in this shot
+      let xy = [pos[0], pos[1]];
+      let z = pos.length > 2 ? pos[2] : 0;
+      let scale = 1, alpha = 1, hidden = false;
 
       const pot = this.pottedEvents.find((e) => e.balls.includes(b.id));
       if (pot) {
         const age = this.time - pot.t;
-        if (age < 0) { /* not yet potted */ }
-        else if (age < dropWindow) {
-          const f = age / dropWindow;
-          const pocket = nearestPocket(pocketById, pot, b.id, this);
-          xy = [pos[0] + (pocket[0] - pos[0]) * f, pos[1] + (pocket[1] - pos[1]) * f];
-          scale = 1 - 0.7 * f;
-          alpha = 1 - f;
+        if (age < 0) {
+          // not yet potted: but pooltool snaps the position at pot.t; if we
+          // are before the event the frames are still free-rolling -- fine.
         } else {
-          hidden = true;
-        }
-        if (age >= 0 && age < 0.05 && !b._pottedFired) {
-          // caller reads ripples via events; nothing to do here
+          const pocket = nearestPocket(pocketById, xy);
+          const from = sampleFrames(this.frames[b.id], Math.max(0, pot.t - 1e-4)) || xy;
+          const dx = pocket[0] - from[0], dy = pocket[1] - from[1];
+          const dist = Math.hypot(dx, dy);
+          const rollDur = Math.min(ROLL_MAX, dist / ROLL_SPEED);
+          if (age < rollDur) {
+            // phase A: keep rolling into the hole
+            const f = rollDur > 0 ? age / rollDur : 1;
+            xy = [from[0] + dx * f, from[1] + dy * f];
+            z = from[2] ?? z;
+          } else {
+            // phase B: sink
+            const f = Math.min(1, (age - rollDur) / SINK_TIME);
+            xy = [pocket[0], pocket[1]];
+            if (drop2D) {
+              scale = 1 - 0.6 * f;
+              alpha = 1 - f;
+            } else {
+              z = (from[2] ?? 0) + (SINK_DEPTH - (from[2] ?? 0)) * f;
+            }
+            if (f >= 1) hidden = true;
+          }
         }
       }
-      out.push({ ...b, xy, scale, alpha, hidden });
+      out.push({ ...b, xy, z, scale, alpha, hidden });
     }
     return out;
   }
 }
 
-function nearestPocket(pocketById, potEvent, ballId, playback) {
-  // find where the ball was at pot time; nearest pocket center wins
-  const pos = playback.positionsAt(potEvent.t)[ballId] || [0, 0];
+function nearestPocket(pocketById, pos) {
   let best = null, bestD = Infinity;
   for (const p of Object.values(pocketById)) {
     const d = Math.hypot(p.center[0] - pos[0], p.center[1] - pos[1]);

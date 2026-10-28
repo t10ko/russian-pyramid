@@ -115,7 +115,14 @@ main { display: grid; grid-template-columns: 1fr 322px; min-height: 0; }
     radial-gradient(1200px 700px at 50% 42%, #131a20 0%, #0c1014 70%),
     var(--bg);
 }
-#table { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#table, #table3d {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+.hidden { display: none !important; }
 
 .hint {
   position: absolute;

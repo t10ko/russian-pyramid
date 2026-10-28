@@ -88,26 +88,27 @@ class _Handler(BaseHTTPRequestHandler):
     # -- dispatch ---------------------------------------------------------------
 
     def do_GET(self):  # noqa: N802
+        path = self.path.split("?", 1)[0]
         try:
-            if self.path in ("/", "/index.html"):
+            if path in ("/", "/index.html"):
                 self._static("index.html")
-            elif self.path == "/api/state":
+            elif path == "/api/state":
                 with self.session.lock:
                     self._json(self.session.state())
-            elif self.path == "/api/drills":
+            elif path == "/api/drills":
                 self._json({"drills": drills.catalog()})
-            elif self.path.startswith("/api/"):
+            elif path.startswith("/api/"):
                 self._json({"error": "not found"}, 404)
             else:
-                self._static(self.path.lstrip("/"))
+                self._static(path.lstrip("/"))
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as exc:  # noqa: BLE001
             self._json({"error": str(exc)}, 500)
 
     def do_POST(self):  # noqa: N802
+        route = self.path.split("?", 1)[0].rstrip("/")
         try:
-            route = self.path.rstrip("/")
             body = self._read_body()
             session = self.session
 
