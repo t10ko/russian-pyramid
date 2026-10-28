@@ -1,9 +1,8 @@
-# Russian Pyramid — Practice Table
+# Russian Pyramid — Test Ground
 
-A repetition-focused **Russian Pyramid** trainer: a 12-foot table with true
-pooltool physics, an aim/spin/power workbench, shot replay with trails, and a
-one-key **"repeat the same situation"** so you can drill a ball until you own
-it.
+A focused **Russian Pyramid** test ground: a 12-ft table with true pooltool
+physics, an aim/spin/power workbench, shot replay with trails, and a one-key
+**"repeat the same situation"** so you can drill a ball until you own it.
 
 Not a game — a practice room.
 
@@ -11,14 +10,13 @@ Not a game — a practice room.
 
 ## What's in the box
 
-- **3D view (default)** — a real perspective table you can orbit (drag) and
-  zoom (wheel), with a TV camera behind the head rail; toggle to a precise
-  top-down **2D view** (<kbd>V</kbd>), shown vertically like the real table
-  (horizontal layout also available).
+- **3D view** — orbit the camera by dragging; it follows the ball you click
+  (the yellow cue ball by default). Wheel zooms; TV and Top camera presets.
 - **12-ft Russian Pyramid table** — 3.56 × 1.78 m playing surface, 74 mm
-  corner mouths with straight jaws and sharp 1.5 mm horns, 82 mm side pockets.
-  The rendered cushion noses, jaw arcs, and pocket circles are *the exact
-  collision geometry* the solver uses.
+  corner mouths with straight jaws and sharp 1.5 mm horns, 82 mm side pockets,
+  recessed slot pockets, cloth markings (head string + spots). The rendered
+  cushion noses, jaw arcs, and pocket geometry are *the exact collision
+  geometry* the solver uses.
 - **68 mm / 285 g balls** simulated by [pooltool](https://pooltool.readthedocs.io)
   (event-based physics: sliding/rolling/spinning regimes, throw, jaw friction,
   follow/draw/english, elevated-cue massé).
@@ -28,13 +26,12 @@ Not a game — a practice room.
 - **Practice loop** — shoot → watch the replay (trails, cushion ripples, pot
   animations) → press <kbd>R</kbd> and the *exact* pre-shot situation returns.
   Attempt history tracks every try with its parameters and outcome.
-- **Aim tools** — ghost-ball preview, cue-stick rendering with spin dot,
-  optional *aim assist* that runs the full simulated runout, fine aim in
-  0.05° steps.
-- **Drills** — free practice, full-rack break, straight/cut corner balls,
-  side pockets, and a svoyak (cue-ball carom) drill.
-- **Cushion presets** — `tournament` (fast rails) or `research` (the heavily
-  deadened leather-jaw values; see *Physics notes*).
+- **Aim tools** — cue-stick rendering with spin dot, optional *aim assist*
+  that runs the full simulated runout, fine aim in 0.05° steps.
+- **Starting layouts** — place balls yourself, or start from a built-in one
+  via `--drill` (free practice, full rack break, corner cuts, side pockets,
+  svoyak caroms). Cushion physics presets (`tournament` / `research`) are a
+  `--physics` flag away; see *Physics notes*.
 
 ## Install (macOS)
 
@@ -76,14 +73,15 @@ Requires Python 3.10–3.13 on macOS (arm64 and x86_64). The underlying
 
 | Input | Action |
 | --- | --- |
-| drag on table | aim from the cue ball (works in 3D via cloth picking) |
-| drag in 3D | orbit the camera; wheel zooms |
+| drag | orbit the camera around the followed ball · wheel zooms |
+| click a ball | make the camera follow it (cue ball by default) |
+| <kbd>Shift</kbd>+drag | aim the cue |
+| <kbd>Shift</kbd>+wheel | cue speed |
 | <kbd>space</kbd> | shoot |
 | <kbd>R</kbd> / <kbd>U</kbd> | repeat the same situation |
 | <kbd>P</kbd> | replay last shot |
-| <kbd>V</kbd> | toggle 3D / 2D view |
 | <kbd>←</kbd> <kbd>→</kbd> | fine aim (±0.05°, Shift = ±0.5°) |
-| <kbd>↑</kbd> <kbd>↓</kbd> / wheel | cue speed |
+| <kbd>↑</kbd> <kbd>↓</kbd> | cue speed |
 | <kbd>M</kbd> | toggle Aim ⇄ Place-balls mode |
 | <kbd>A</kbd> | aim assist (full runout) |
 | drag ball *(place mode)* | move it; click cloth adds a ball; right-click removes |

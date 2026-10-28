@@ -158,36 +158,29 @@ export class Renderer3D {
       g.add(jaw);
     }
 
-    // pockets: recessed hole + leather rim (NOT a cylinder sticking up)
-    const rimMat = new THREE.MeshStandardMaterial({
-      color: LEATHER, roughness: 0.7, metalness: 0.05,
-    });
+    // pockets: recessed dark slots shaped like real pyramid pockets --
+    // an extruded stadium whose visible part is the mouth between the jaws;
+    // the rest hides under the cloth edge, cushions and rails
     const holeMat = new THREE.MeshStandardMaterial({
-      color: 0x060504, roughness: 1, side: THREE.DoubleSide,
+      color: 0x050403, roughness: 1,
     });
+    const bisectors = {
+      lb: [1, 1], lt: [1, -1], rb: [-1, 1], rt: [-1, -1],
+    };
     for (const p of t.pockets) {
-      const rim = new THREE.Mesh(
-        new THREE.RingGeometry(p.radius * 0.92, p.radius * 1.32, 36),
-        rimMat,
-      );
-      rim.rotation.x = -Math.PI / 2;
-      rim.position.set(p.center[0], Y0 + 0.0008, p.center[1]);
-      g.add(rim);
-
-      const wall = new THREE.Mesh(
-        new THREE.CylinderGeometry(p.radius * 0.94, p.radius * 0.78, 0.06, 30, 1, true),
-        holeMat,
-      );
-      wall.position.set(p.center[0], Y0 - 0.03, p.center[1]);
-      g.add(wall);
-
-      const bottom = new THREE.Mesh(
-        new THREE.CircleGeometry(p.radius * 0.85, 28),
-        new THREE.MeshStandardMaterial({ color: 0x020202 }),
-      );
-      bottom.rotation.x = -Math.PI / 2;
-      bottom.position.set(p.center[0], Y0 - 0.058, p.center[1]);
-      g.add(bottom);
+      const corner = !!bisectors[p.id];
+      const halfLen = corner ? 0.075 : 0.055;   // along the slot
+      const halfWid = corner ? 0.0475 : 0.033;  // across the mouth
+      const shape = stadium(halfLen, halfWid);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.055, bevelEnabled: false });
+      geo.rotateX(Math.PI / 2);   // shape plane onto the cloth, extrude down
+      const slot = new THREE.Mesh(geo, holeMat);
+      const d = corner
+        ? bisectors[p.id].map((v) => v / Math.SQRT2)
+        : [0, 1];                  // side slots run along the rail
+      slot.rotation.y = Math.atan2(-d[1], d[0]);
+      slot.position.set(p.center[0], Y0 - 0.0015, p.center[1]);
+      g.add(slot);
     }
 
     // sights (diamonds) on the wood, level with the slab top
@@ -253,17 +246,6 @@ export class Renderer3D {
       g.add(s);
     }
 
-    // rack triangle: apex on the foot spot, opening toward the foot rail
-    const gap = 2 * 0.034 + 0.0006;
-    const h = 4 * gap * Math.sin(Math.PI / 3);
-    const half = 2 * gap;
-    const ax = cx, ay = yFoot;
-    const bx = cx - half, by = yFoot + h;
-    const cx2 = cx + half, cy2 = yFoot + h;
-    dashLine(g, mat, [ax, ay], [bx, by], 0.0028, 0.3);
-    dashLine(g, mat, [ax, ay], [cx2, cy2], 0.0028, 0.3);
-    dashLine(g, mat, [bx, by], [cx2, cy2], 0.0028, 0.3);
-
     this.markingsGroup = g;
     this.scene.add(g);
   }
@@ -290,18 +272,19 @@ export class Renderer3D {
     );
     this.aimGroup.add(this.aimLine);
 
-    this.ghostBall = new THREE.Mesh(
-      new THREE.SphereGeometry(this.ballR, 20, 14),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.55 }),
-    );
-    this.aimGroup.add(this.ghostBall);
-
-    this.objArrow = new THREE.ArrowHelper(
-      new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 0.3, 0xd4a537, 0.05, 0.03);
-    this.aimGroup.add(this.objArrow);
-
     this.stick = buildCueStick();
     this.aimGroup.add(this.stick);
+
+    // soft ring marking the ball the camera follows
+    this.focusRing = new THREE.Mesh(
+      new THREE.RingGeometry(this.ballR * 1.06, this.ballR * 1.3, 36),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.22, side: THREE.DoubleSide,
+      }),
+    );
+    this.focusRing.rotation.x = -Math.PI / 2;
+    this.focusRing.visible = false;
+    this.scene.add(this.focusRing);
   }
 
   // ---------- camera ------------------------------------------------------
@@ -312,11 +295,16 @@ export class Renderer3D {
     if (preset === 'top') {
       this.camera.position.set(w / 2 + 0.0001, Y0 + 3.6, l / 2);
       this.controls.target.set(w / 2, Y0, l / 2);
-    } else {  // 'tv': behind the head rail, looking up-table
-      this.camera.position.set(w / 2 + 0.02, Y0 + 1.6, -1.05);
-      this.controls.target.set(w / 2, Y0 + 0.02, l * 0.55);
+    } else {  // 'tv': over the shoulder of whatever ball is followed
+      const tg = this.controls.target;
+      this.camera.position.set(tg.x + 0.02, tg.y + 1.55, tg.z - 1.05);
     }
     this.controls.update();
+  }
+
+  // Keep the orbit pivot on the followed ball (table coords + z).
+  follow(x, y, z) {
+    this.controls.target.set(x, Y0 + Math.max(z ?? this.ballR, 0), y);
   }
 
   // ---------- frame -------------------------------------------------------
@@ -335,6 +323,13 @@ export class Renderer3D {
     this._syncAssist(scene.assist);
     this._syncTrails(scene);
     this._syncFx(scene);
+    if (scene.focus) {
+      this.follow(scene.focus.xy[0], scene.focus.xy[1], scene.focus.z);
+      this.focusRing.position.set(scene.focus.xy[0], Y0 + 0.002, scene.focus.xy[1]);
+      this.focusRing.visible = true;
+    } else {
+      this.focusRing.visible = false;
+    }
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
@@ -416,7 +411,7 @@ export class Renderer3D {
     this.aimGroup.visible = show;
     if (!show) return;
 
-    const { cue, lineEnd, ghost, objDir, stick, ballR } = aim;
+    const { cue, lineEnd, stick, ballR } = aim;
 
     const zA = Y0 + ballR;
     this.aimLine.geometry.setFromPoints([
@@ -425,20 +420,8 @@ export class Renderer3D {
     ]);
     this.aimLine.computeLineDistances();
 
-    const showGhost = aim.showGhost && ghost;
-    this.ghostBall.visible = !!showGhost;
-    if (showGhost) {
-      this.ghostBall.position.set(ghost[0], zA, ghost[1]);
-    }
-
-    this.objArrow.visible = !!(showGhost && objDir);
-    if (objDir && showGhost) {
-      this.objArrow.position.set(ghost[0], Y0 + 0.004, ghost[1]);
-      this.objArrow.setDirection(new THREE.Vector3(objDir[0], 0, objDir[1]));
-      this.objArrow.setLength(0.3, 0.05, 0.028);
-    }
-
-    // stick: tip/butt are table-plane points; raise the butt with theta
+    // stick: mesh origin is its tip end, so anchor it at the TIP point and
+    // aim its local +Y (tip direction) from butt toward tip
     const theta = (aim.theta ?? 0) * Math.PI / 180;
     const tip = new THREE.Vector3(stick.tip[0], zA, stick.tip[1]);
     const butt = new THREE.Vector3(stick.butt[0], zA, stick.butt[1]);
@@ -446,9 +429,8 @@ export class Renderer3D {
     butt.y += Math.sin(theta) * len;
     tip.y += Math.sin(theta) * 0.04;
 
-    const mid = tip.clone().lerp(butt, 0.5);
     const dir = tip.clone().sub(butt).normalize();   // butt -> tip (+Y local)
-    this.stick.position.copy(mid);
+    this.stick.position.copy(tip);
     this.stick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
   }
 
@@ -528,24 +510,18 @@ export class Renderer3D {
   }
 }
 
-// Dashed line built from short flat boxes (used for the rack triangle).
-function dashLine(group, mat, a, b, width, opacity) {
-  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-  const n = Math.max(2, Math.round(len / 0.05));
-  const dash = 0.026, gap = 0.024;
-  const ux = (b[0] - a[0]) / len, uy = (b[1] - a[1]) / len;
-  const ang = -Math.atan2(b[1] - a[1], b[0] - a[0]);
-  let t = 0;
-  while (t < len) {
-    const segLen = Math.min(dash, len - t);
-    const m = mat.clone();
-    m.opacity = opacity;
-    const box = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.0006, width), m);
-    box.position.set(a[0] + ux * (t + segLen / 2), Y0 + 0.0014, a[1] + uy * (t + segLen / 2));
-    box.rotation.y = ang;
-    group.add(box);
-    t += dash + gap;
-  }
+// Stadium (rounded-slot) shape centered at origin, long axis on X.
+function stadium(halfLen, halfWid) {
+  const r = halfWid;
+  const s = new THREE.Shape();
+  const lx = halfLen - halfWid;
+  s.moveTo(-lx, -halfWid);
+  s.lineTo(lx, -halfWid);
+  s.absarc(lx, 0, r, -Math.PI / 2, Math.PI / 2, false);
+  s.lineTo(-lx, halfWid);
+  s.absarc(-lx, 0, r, Math.PI / 2, Math.PI * 1.5, false);
+  s.closePath();
+  return s;
 }
 
 function buildCueStick() {

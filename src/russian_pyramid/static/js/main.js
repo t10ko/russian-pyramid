@@ -1,4 +1,8 @@
-// Application controller: owns the server state, wires UI + canvas together.
+// Application controller: owns the server state, wires UI + 3D canvas.
+//
+// This is a 3D-only test ground.  The 2D canvas renderer still exists in
+// render.js but is reachable only through the __RP_FORCE_2D__ flag used by
+// scripts/ui_smoke.mjs (Node has no WebGL); browsers always render in 3D.
 
 import { api } from './api.js';
 import { View } from './geometry.js';
@@ -8,15 +12,6 @@ import { Aim, SpinPad } from './aim.js';
 import { Playback } from './playback.js';
 import { Interact } from './interact.js';
 import { $, hideBanner, renderAttempts, setHint, showBanner, toast, updateStats } from './ui.js';
-
-const store = {
-  get(key, fallback) {
-    try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
-  },
-  set(key, value) {
-    try { localStorage.setItem(key, value); } catch { /* private mode */ }
-  },
-};
 
 class App {
   constructor() {
@@ -34,17 +29,13 @@ class App {
     this._aimSyncTimer = null;
     this.busy = false;
     this.shiftHeld = false;
+    this.focusBallId = 'cue';
+    this._framed = false;
 
-    this.viewMode = globalThis.__RP_FORCE_2D__ ? '2d' : store.get('rp.view', '3d');
-    // ?view=2d|3d URL override (handy for debugging/screenshots)
-    if (typeof location !== 'undefined') {
-      const qsView = new URLSearchParams(location.search).get('view');
-      if (qsView === '2d' || qsView === '3d') this.viewMode = qsView;
-    }
-    this.orientation = store.get('rp.orientation', 'vertical');
-    this.r2d = new Renderer($('table'));
-    this.r3d = null;   // lazy: needs WebGL
-    this._applyCanvasVisibility();
+    // headless-test path only; browsers are always 3D
+    this.viewMode = globalThis.__RP_FORCE_2D__ ? '2d' : '3d';
+    this.r2d = globalThis.__RP_FORCE_2D__ ? new Renderer($('table')) : null;
+    this.r3d = null;
   }
 
   get renderer() {
@@ -52,12 +43,7 @@ class App {
   }
 
   activeCanvas() {
-    return this.viewMode === '3d' ? $('table3d') : $('table');
-  }
-
-  _applyCanvasVisibility() {
-    $('table').classList.toggle('hidden', this.viewMode === '3d');
-    $('table3d').classList.toggle('hidden', this.viewMode !== '3d');
+    return $('table3d');
   }
 
   get ballRadius() { return this.state.ball_radius; }
@@ -97,11 +83,8 @@ class App {
   // ---------- boot ----------
 
   async init() {
-    this.initDone = false;
-    this.frameCount = 0;
     this.state = await api.state();
     this.view = new View(this.table);
-    this.view.orientation = this.orientation;
     this.aim = new Aim(this.table, this.ballRadius);
     this.aim.phi = this.state.aim.phi;
     this.aim.V0 = this.state.aim.V0;
@@ -111,7 +94,6 @@ class App {
 
     new Interact($('table-wrap'), this);
     this.wireUI();
-    this.syncToggles();
 
     window.addEventListener('keydown', (e) => { if (e.key === 'Shift') this.setShift(true); });
     window.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.setShift(false); });
@@ -125,7 +107,8 @@ class App {
 
     this.playback.onEnd = () => this.onShotEnd();
     this.refreshUI();
-    setHint('drag to aim · space to shoot · R repeats the same situation');
+    this.updateControls();
+    setHint('Shift+drag aims · drag orbits · click a ball to follow it · space to shoot');
 
     if (typeof location !== 'undefined' &&
         new URLSearchParams(location.search).has('autoshot')) {
@@ -136,7 +119,7 @@ class App {
   }
 
   onResize() {
-    this.r2d.resize(this.view);
+    this.r2d?.resize(this.view);
     if (this.r3d) this.r3d.resize();
   }
 
@@ -148,10 +131,7 @@ class App {
         this.r3d.resize();
       } catch (err) {
         console.error('3D renderer failed:', err);
-        toast(`3D view unavailable (${err.message}) — using 2D`, 'error', 6000);
-        this.viewMode = '2d';
-        this._applyCanvasVisibility();
-        return null;
+        toast(`3D view unavailable (${err.message})`, 'error', 6000);
       }
     }
     return this.r3d;
@@ -160,47 +140,9 @@ class App {
   // ---------- UI wiring ----------
 
   wireUI() {
-    const drillSel = $('drill-select');
-    for (const d of this.state.drills) {
-      const opt = document.createElement('option');
-      opt.value = d.id;
-      opt.textContent = d.label;
-      drillSel.appendChild(opt);
-    }
-    drillSel.value = this.state.drill;
-    drillSel.addEventListener('change', async () => {
-      try {
-        this.applyState(await api.setDrill(drillSel.value));
-        this.afterSituationChange(`drill: ${this.state.drill}`);
-      } catch (err) { toast(err.message, 'error'); }
-    });
-
-    const physSel = $('physics-select');
-    for (const [name] of Object.entries(this.state.physics_presets)) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      physSel.appendChild(opt);
-    }
-    physSel.value = this.state.physics_preset;
-    physSel.addEventListener('change', async () => {
-      try {
-        this.applyState(await api.setPhysics(physSel.value));
-        this.afterSituationChange(`cushions: ${physSel.value}`);
-      } catch (err) { toast(err.message, 'error'); }
-    });
-
-    $('view-toggle').addEventListener('click', (e) => {
-      const btn = e.target.closest('button');
-      if (btn) this.setViewMode(btn.dataset.view);
-    });
     $('camera-toggle').addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if (btn) this.setCameraPreset(btn.dataset.cam);
-    });
-    $('layout-toggle').addEventListener('click', (e) => {
-      const btn = e.target.closest('button');
-      if (btn) this.setOrientation(btn.dataset.orient);
     });
     $('mode-toggle').addEventListener('click', (e) => {
       const btn = e.target.closest('button');
@@ -247,39 +189,9 @@ class App {
     });
   }
 
-  syncToggles() {
-    for (const btn of $('view-toggle').querySelectorAll('button')) {
-      btn.classList.toggle('on', btn.dataset.view === this.viewMode);
-    }
-    for (const btn of $('layout-toggle').querySelectorAll('button')) {
-      btn.classList.toggle('on', btn.dataset.orient === this.orientation);
-    }
-    $('camera-toggle').style.display = this.viewMode === '3d' ? '' : 'none';
-  }
-
-  setViewMode(mode) {
-    if (mode === this.viewMode) return;
-    this.viewMode = mode;
-    store.set('rp.view', mode);
-    if (mode === '3d') this.ensure3d();
-    this._applyCanvasVisibility();
-    this.onResize();
-    this.syncToggles();
-    this.updateControls();
-    if (this.mode === 'aim') this.setMode('aim');   // refresh hint for the view
-  }
-
-  setOrientation(orientation) {
-    this.orientation = orientation;
-    store.set('rp.orientation', orientation);
-    this.view.orientation = orientation;
-    this.r2d.resize(this.view);
-    this.syncToggles();
-  }
-
   setCameraPreset(preset) {
     this.cameraPreset = preset;
-    if (this.viewMode === '3d') this.r3d?.setCamera(preset);
+    this.r3d?.setCamera(preset);
     for (const btn of $('camera-toggle').querySelectorAll('button')) {
       btn.classList.toggle('on', btn.dataset.cam === preset);
     }
@@ -490,6 +402,30 @@ class App {
     }
   }
 
+  // ---------- camera focus ----------
+
+  setFocusBall(id) {
+    if (this.focusBallId === id) return;
+    this.focusBallId = id;
+    this._framed = false;   // re-frame the TV camera on the new ball
+    toast(id === 'cue' ? 'camera follows the cue ball' : `camera follows ball ${id}`);
+  }
+
+  // Resolve which ball the camera should orbit: the chosen one, else the
+  // cue ball, else any ball (the cue may be in a pocket).
+  computeFocus(balls) {
+    const visible = balls.filter((b) => !b.hidden);
+    let ball = visible.find((b) => b.id === this.focusBallId)
+      || visible.find((b) => b.isCue)
+      || visible[0];
+    if (ball) {
+      this._lastFocus = { id: ball.id, xy: ball.xy, z: ball.z ?? this.ballRadius };
+      if (ball.id !== this.focusBallId) this.focusBallId = ball.id;
+      return this._lastFocus;
+    }
+    return this._lastFocus || null;   // everything potted: hold the last point
+  }
+
   // ---------- modes ----------
 
   setShift(on) {
@@ -502,13 +438,12 @@ class App {
   // dragged (place mode).
   updateControls() {
     const wrap = $('table-wrap');
-    if (this.viewMode !== '3d') {
-      this.r3d?.setInteractive(false);
-      wrap.style.cursor = this.mode === 'place' ? 'move' : 'crosshair';
+    if (!this.r3d) {
+      wrap.style.cursor = 'crosshair';
       return;
     }
     const cameraFree = this.mode === 'place' ? !this.dragPreview : !this.shiftHeld;
-    this.r3d?.setInteractive(cameraFree);
+    this.r3d.setInteractive(cameraFree);
     wrap.style.cursor = this.mode === 'place'
       ? 'move'
       : (this.shiftHeld ? 'crosshair' : 'grab');
@@ -520,12 +455,9 @@ class App {
       btn.classList.toggle('on', btn.dataset.mode === mode);
     }
     this.updateControls();
-    const aimHint = this.viewMode === '3d'
-      ? 'Shift+drag aims · drag orbits · space to shoot · R repeats'
-      : 'drag to aim · space to shoot · R repeats the same situation';
     setHint(mode === 'place'
       ? 'drag balls to move · click cloth to add · right-click to remove · M to aim'
-      : aimHint);
+      : 'Shift+drag aims · drag orbits · click a ball to follow it · space to shoot');
   }
 
   toggleMode() { this.setMode(this.mode === 'aim' ? 'place' : 'aim'); }
@@ -572,8 +504,8 @@ class App {
       (this.playback.playing || this.playback.time < this.playback.duration - 1e-3);
     let balls;
     if (this.playback.frames && !this.dragPreview) {
-      balls = this.playback.visualBalls(
-        this.staticBalls(), this.pocketById(), this.viewMode === '2d');
+      balls = this.playback.visualBalls(this.staticBalls(), this.pocketById(),
+                                        this.viewMode === '2d');
     } else {
       balls = this.staticBalls();
     }
@@ -581,10 +513,10 @@ class App {
     return {
       balls,
       playing,
+      focus: this.computeFocus(balls),
       aim: (cue && !playing && this.mode === 'aim')
         ? { ...this.aim.preview(cue.xy, this.staticBalls()),
             ...this.aim.params(),
-            showGhost: $('ghost').checked,
             showSpin: true }
         : null,
       assist: (!playing && this.assistPaths) ? this.assistPaths : null,
@@ -603,8 +535,13 @@ class App {
       this.fireEvents();
       const scene = this.buildScene();
       if (this.viewMode === '3d' && this.r3d) {
+        // frame the TV camera on the followed ball once we know where it is
+        if (!this._framed && scene.focus) {
+          this.setCameraPreset(this.cameraPreset || 'tv');
+          this._framed = true;
+        }
         this.r3d.draw(scene);
-      } else {
+      } else if (this.r2d) {
         this.r2d.draw(scene, this.view);
       }
     } catch (err) {

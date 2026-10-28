@@ -129,7 +129,7 @@ export class Renderer {
     }
     g.restore();
 
-    // --- cloth markings: head string, spots, rack triangle ---
+    // --- cloth markings: head string + spots (lines only, like the real cloth)
     g.save();
     g.strokeStyle = 'rgba(255, 255, 255, 0.18)';
     g.fillStyle = 'rgba(255, 255, 255, 0.22)';
@@ -145,20 +145,6 @@ export class Renderer {
       g.arc(view.cx(cxm, sy), view.cy(cxm, sy), view.m(0.009), 0, TAU);
       g.fill();
     }
-
-    // rack triangle: apex on the foot spot, opening toward the foot rail
-    const gap = 0.0686;                       // rack row spacing
-    const th = 4 * gap * Math.sin(Math.PI / 3);
-    const half = 2 * gap;
-    g.setLineDash([view.m(0.026), view.m(0.024)]);
-    g.strokeStyle = 'rgba(255, 255, 255, 0.20)';
-    g.beginPath();
-    g.moveTo(view.cx(cxm, yFoot), view.cy(cxm, yFoot));
-    g.lineTo(view.cx(cxm - half, yFoot + th), view.cy(cxm - half, yFoot + th));
-    g.lineTo(view.cx(cxm + half, yFoot + th), view.cy(cxm + half, yFoot + th));
-    g.closePath();
-    g.stroke();
-    g.setLineDash([]);
     g.restore();
 
     // --- physics cushion noses: the exact lines the solver collides with ---
@@ -303,7 +289,7 @@ export class Renderer {
   }
 
   drawAim(g, scene, view) {
-    const { cue, dir, ghost, objDir, objBall, lineEnd } = scene.aim;
+    const { cue, lineEnd } = scene.aim;
     if (!cue) return;
 
     // cue line
@@ -343,28 +329,6 @@ export class Renderer {
       g.lineTo(view.cx(butt[1], butt[0]), view.cy(butt[1], butt[0]));
       g.stroke();
       g.restore();
-    }
-
-    // ghost ball + object-ball departure line
-    if (ghost && scene.showGhost) {
-      const r = view.m(scene.aim.ballR);
-      const gx = view.cx(ghost[1], ghost[0]);
-      const gy = view.cy(ghost[1], ghost[0]);
-      g.save();
-      g.setLineDash([4, 4]);
-      g.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-      g.lineWidth = 1.4;
-      g.beginPath();
-      g.arc(gx, gy, r, 0, TAU);
-      g.stroke();
-      g.restore();
-
-      if (objDir) {
-        const len = view.m(0.30);
-        const ox = gx + objDir[1] * len;
-        const oy = gy + objDir[0] * len;
-        drawArrow(g, gx, gy, ox, oy, 'rgba(212, 165, 55, 0.9)', 2);
-      }
     }
   }
 
@@ -455,24 +419,4 @@ function drawDiamond(g, x, y, r) {
   g.lineTo(x - r, y);
   g.closePath();
   g.fill();
-}
-
-function drawArrow(g, x0, y0, x1, y1, color, width) {
-  g.save();
-  g.strokeStyle = color;
-  g.fillStyle = color;
-  g.lineWidth = width;
-  g.beginPath();
-  g.moveTo(x0, y0);
-  g.lineTo(x1, y1);
-  g.stroke();
-  const ang = Math.atan2(y1 - y0, x1 - x0);
-  const head = 7;
-  g.beginPath();
-  g.moveTo(x1, y1);
-  g.lineTo(x1 - head * Math.cos(ang - 0.45), y1 - head * Math.sin(ang - 0.45));
-  g.lineTo(x1 - head * Math.cos(ang + 0.45), y1 - head * Math.sin(ang + 0.45));
-  g.closePath();
-  g.fill();
-  g.restore();
 }

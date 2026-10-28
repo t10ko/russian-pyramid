@@ -52,6 +52,7 @@ export class Interact {
     if (!this.onCanvas(e)) return;
     const xy = this.tablePos(e);
     if (!xy) return;
+    this._downAt = { x: e.clientX, y: e.clientY };
     this.moved = false;
     const ball = this.ballAt(xy);
 
@@ -65,8 +66,8 @@ export class Interact {
       return;
     }
 
-    // aim mode: in 3D the plain drag belongs to the camera -- the cue
-    // moves when Shift is held (2D always aims; it has no camera)
+    // aim mode: the plain drag belongs to the camera -- the cue moves when
+    // Shift is held (the headless 2D path always aims; it has no camera)
     const canAim = this.app.viewMode === '2d' || e.shiftKey;
     if (this.app.hasCue() && canAim) {
       this.dragAim = true;
@@ -106,14 +107,23 @@ export class Interact {
     return angleDeg(xy[0] - cue[0], xy[1] - cue[1]);
   }
 
-  up() {
+  up(e) {
     if (this.dragBall) {
       const { id, xy } = this.dragBall;
       this.app.moveBall(id, xy);
+    } else if (!this.moved && this._downAt && this.app.mode === 'aim' && !e?.shiftKey) {
+      // plain click (no drag, no Shift): focus the camera on that ball
+      const dist = Math.hypot(e.clientX - this._downAt.x, e.clientY - this._downAt.y);
+      if (dist < 5) {
+        const xy = this.tablePos(e);
+        const ball = xy ? this.ballAt(xy) : null;
+        if (ball) this.app.setFocusBall(ball.id);
+      }
     }
     this.dragBall = null;
     this.dragAim = false;
     this._last = null;
+    this._downAt = null;
     this.app.onDragPreview(null);
   }
 
@@ -143,7 +153,7 @@ export class Interact {
   wheel(e) {
     if (!this.onCanvas(e)) return;
     if (this.app.mode !== 'aim' || !this.app.hasCue()) return;
-    // in 3D the wheel zooms the camera; Shift+wheel sets power (2D: always)
+    // the wheel zooms the camera; Shift+wheel sets power
     if (this.app.viewMode === '3d' && !e.shiftKey) return;
     e.preventDefault();
     const step = e.shiftKey ? 0.5 : 0.1;
@@ -161,7 +171,6 @@ export class Interact {
       case 'p': case 'P': app.replayLast(); break;
       case 'm': case 'M': app.toggleMode(); break;
       case 'a': case 'A': app.toggleAssist(); break;
-      case 'v': case 'V': app.setViewMode(app.viewMode === '3d' ? '2d' : '3d'); break;
       case 'ArrowLeft': e.preventDefault(); app.nudgeAim(coarse ? 0.5 : -0.05); break;
       case 'ArrowRight': e.preventDefault(); app.nudgeAim(coarse ? -0.5 : 0.05); break;
       case 'ArrowUp': e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); break;
