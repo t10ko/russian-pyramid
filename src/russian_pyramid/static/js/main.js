@@ -29,6 +29,13 @@ class App {
   get ballRadius() { return this.state.ball_radius; }
   get table() { return this.state.table; }
 
+  // Some endpoints return state without the (immutable) table geometry --
+  // never let those responses wipe it.
+  applyState(next) {
+    if (this.state?.table && !next.table) next.table = this.state.table;
+    this.state = next;
+  }
+
   pocketById() {
     const map = {};
     for (const p of this.table.pockets) map[p.id] = p;
@@ -92,7 +99,7 @@ class App {
     drillSel.value = this.state.drill;
     drillSel.addEventListener('change', async () => {
       try {
-        this.state = await api.setDrill(drillSel.value);
+        this.applyState(await api.setDrill(drillSel.value));
         this.afterSituationChange(`drill: ${this.state.drill}`);
       } catch (err) { toast(err.message, 'error'); }
     });
@@ -107,7 +114,7 @@ class App {
     physSel.value = this.state.physics_preset;
     physSel.addEventListener('change', async () => {
       try {
-        this.state = await api.setPhysics(physSel.value);
+        this.applyState(await api.setPhysics(physSel.value));
         this.afterSituationChange(`cushions: ${physSel.value}`);
       } catch (err) { toast(err.message, 'error'); }
     });
@@ -127,10 +134,7 @@ class App {
     $('power').addEventListener('input', (e) => this.setAim({ V0: +e.target.value }));
     $('theta').addEventListener('input', (e) => this.setAim({ theta: +e.target.value }));
 
-    $('assist').addEventListener('change', (e) => {
-      if (e.target.checked) this.schedulePredict();
-      else this.assistPaths = null;
-    });
+    $('assist').addEventListener('change', (e) => this.setAssist(e.target.checked));
     $('trails').addEventListener('change', (e) => { /* read live in buildScene */ });
     $('ghost').addEventListener('change', (e) => { /* read live in buildScene */ });
 
@@ -241,7 +245,7 @@ class App {
   }
 
   applyShot(payload) {
-    this.state = payload.state;
+    this.applyState(payload.state);
     this.attemptShots.set(payload.attempt.n, payload);
     if (this.attemptShots.size > 40) {
       this.attemptShots.delete(this.attemptShots.keys().next().value);
@@ -266,7 +270,7 @@ class App {
       buttons.push({
         label: 'Respawn cue',
         onClick: async () => {
-          this.state = await api.respawnCue();
+          this.applyState(await api.respawnCue());
           this.playback.clear();
           this.afterSituationChange('cue ball respawned');
         },
@@ -299,7 +303,7 @@ class App {
   async repeatSituation() {
     if (!this.state.can_undo) { toast('nothing to repeat yet'); return; }
     try {
-      this.state = await api.undo();
+      this.applyState(await api.undo());
       this.afterSituationChange('situation restored — same ball, same angle');
     } catch (err) {
       toast(err.message, 'error');
@@ -341,7 +345,7 @@ class App {
 
   async moveBall(id, xy) {
     try {
-      this.state = await api.moveBall(id, xy);
+      this.applyState(await api.moveBall(id, xy));
       this.afterSituationChange(null);
     } catch (err) {
       toast(err.message, 'error');
@@ -351,7 +355,7 @@ class App {
   async addBall(xy) {
     try {
       const res = await api.addBall(xy);
-      this.state = res.state;
+      this.applyState(res.state);
       this.afterSituationChange(`added ball ${res.id}`);
     } catch (err) {
       toast(err.message, 'error');
@@ -360,7 +364,7 @@ class App {
 
   async removeBall(id) {
     try {
-      this.state = await api.removeBall(id);
+      this.applyState(await api.removeBall(id));
       this.afterSituationChange(`removed ball ${id}`);
     } catch (err) {
       toast(err.message, 'error');
@@ -381,7 +385,13 @@ class App {
   }
 
   toggleMode() { this.setMode(this.mode === 'aim' ? 'place' : 'aim'); }
-  toggleAssist() { $('assist').checked = !$('assist').checked; $('assist').dispatchEvent(new Event('change')); }
+  setAssist(on) {
+    $('assist').checked = on;
+    if (on) this.schedulePredict();
+    else this.assistPaths = null;
+  }
+
+  toggleAssist() { this.setAssist(!$('assist').checked); }
   showHelp() { $('help').showModal(); }
 
   // ---------- render loop ----------
@@ -470,6 +480,7 @@ function nearestPocketCenter(p, app) {
 }
 
 const app = new App();
+globalThis.__russianPyramidApp = app;  // handy in the devtools console
 app.init().catch((err) => {
   document.body.insertAdjacentHTML('afterbegin',
     `<div style="color:#e5544b;padding:20px;font-family:monospace">failed to start: ${err}</div>`);

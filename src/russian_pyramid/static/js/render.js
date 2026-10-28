@@ -397,7 +397,7 @@ function roundRect(g, x, y, w, h, r) {
   g.moveTo(x + r, y);
   g.arcTo(x + w, y, x + w, y + h, r);
   g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y);
+  g.arcTo(x, y + h, x, y, r);
   g.arcTo(x, y, x + w, y, r);
   g.closePath();
 }

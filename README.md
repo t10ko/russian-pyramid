@@ -132,6 +132,7 @@ rails pyramid is famous for.
 uv venv && uv pip install -e ".[dev]"
 uv run pytest                    # physics, drills, session, server tests
 uv run ruff check src tests      # lint
+node scripts/ui_smoke.mjs        # headless frontend run (see file header)
 ```
 
 Layout:

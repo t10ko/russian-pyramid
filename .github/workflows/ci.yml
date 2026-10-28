@@ -30,3 +30,22 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+      - name: Check frontend syntax
+        run: for f in src/russian_pyramid/static/js/*.js; do node --check "$f"; done
+
+      - name: Headless UI smoke (real server + canvas spec checks)
+        if: matrix.os == 'macos-latest' && matrix.python == '3.12'
+        run: |
+          uv run russian-pyramid --no-browser --drill straight_corner --port 8123 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8123/api/state > /dev/null && break
+            sleep 1
+          done
+          curl -s http://127.0.0.1:8123/api/state > /tmp/rp_fixture_state.json
+          curl -s -X POST http://127.0.0.1:8123/api/shoot -H 'Content-Type: application/json' \
+            -d '{"params":{"V0":3.5,"phi":45.0}}' > /tmp/rp_fixture_shoot.json
+          curl -s -X POST http://127.0.0.1:8123/api/predict -H 'Content-Type: application/json' \
+            -d '{"params":{"V0":3.5,"phi":45.0}}' > /tmp/rp_fixture_predict.json
+          kill %1
+          node scripts/ui_smoke.mjs
