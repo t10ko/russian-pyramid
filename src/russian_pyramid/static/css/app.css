@@ -75,6 +75,7 @@ body {
   cursor: pointer;
 }
 .seg button.on { background: #2a3642; color: var(--ink); }
+.seg button:disabled { opacity: .38; cursor: default; }
 
 .btn {
   background: #232d37;
@@ -187,6 +188,15 @@ main { display: grid; grid-template-columns: 1fr 322px; min-height: 0; }
   letter-spacing: 1px;
   color: var(--ink-dim);
 }
+#shot-panel.disabled-panel .spin-row,
+#shot-panel.disabled-panel .slider,
+#shot-panel.disabled-panel .aim-read,
+#shot-panel.disabled-panel #btn-shoot {
+  opacity: 0.36;
+  pointer-events: none;
+  user-select: none;
+  filter: grayscale(0.45);
+}
 
 .spin-row { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
 #spin-pad {
@@ -242,6 +252,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 #attempts li:hover { background: #1f2933; }
 #attempts li:last-child { background: #1d2731; }
+#attempts li.active { background: #243240; outline: 1px solid var(--accent); }
 #attempts .n { font-family: var(--mono); color: var(--ink-dim); width: 26px; }
 #attempts .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 #attempts .dot.pot { background: var(--good); }

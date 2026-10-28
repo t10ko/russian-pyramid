@@ -23,6 +23,8 @@ class App {
     this.pocketFlashes = [];
     this.dragPreview = null;
     this.attemptShots = new Map();   // n -> shot payload (client-side replay cache)
+    this.activeAttemptN = null;      // currently selected/last attempt for playback
+    this._savedLiveAim = null;       // live aim snapshot while in playback mode
     this._firedEvents = 0;
     this._aimSyncTimer = null;
     this.busy = false;
@@ -57,6 +59,24 @@ class App {
       this.cueBallId = next.cue_ball_id;
       this.focusBallId = next.cue_ball_id;
     }
+  }
+
+  clearAttemptHistory() {
+    this.attemptShots.clear();
+    this.activeAttemptN = null;
+  }
+
+  hasReplay() {
+    return this.attemptShots.size > 0;
+  }
+
+  latestAttemptN() {
+    return this.attemptShots.size ? Math.max(...this.attemptShots.keys()) : 0;
+  }
+
+  isLiveShotRolling() {
+    return this.mode !== 'playback' && !!this.playback.frames &&
+      (this.playback.playing || this._scrubbing || this.playback.time < this.playback.duration - 1e-3);
   }
 
   pocketById() {
@@ -183,21 +203,27 @@ class App {
     $('power').addEventListener('input', (e) => this.setAim({ V0: percentToV0(+e.target.value) }));
     $('theta').addEventListener('input', (e) => this.setAim({ theta: +e.target.value }));
 
-    $('pl-play').addEventListener('click', () => {
-      if (this.playback.playing) this.playback.pause();
-      else this.playback.play();
-      this.syncPlayButton();
-    });
+    $('pl-play').addEventListener('click', () => this.togglePlayback());
     $('pl-speed').addEventListener('change', (e) => {
       this.playback.speed = +e.target.value;
     });
     $('pl-scrub').addEventListener('input', (e) => {
-      if (!this.playback.frames) return;
+      if (!this.hasReplay()) return;
+      if (this.mode !== 'playback' || !this.playback.frames) {
+        const n = (this.activeAttemptN && this.attemptShots.has(this.activeAttemptN))
+          ? this.activeAttemptN
+          : this.latestAttemptN();
+        if (!this.enterPlaybackForAttempt(n, { autoPlay: false })) return;
+      }
       this.playback.pause();
       this.playback.seek(+e.target.value);
       this._firedEvents = 0;
       this.ripples = [];
       this.pocketFlashes = [];
+      this.syncPlayButton();
+      const displayTime = Math.max(0, this.playback.time);
+      $('pl-time').textContent =
+        `${displayTime.toFixed(1)} / ${this.playback.duration.toFixed(1)} s`;
     });
     $('pl-scrub').addEventListener('pointerdown', () => { this._scrubbing = true; });
     $('pl-scrub').addEventListener('pointerup', () => { this._scrubbing = false; });
@@ -229,13 +255,82 @@ class App {
       btn.classList.toggle('on', match);
     });
     updateStats(this.state);
-    renderAttempts(this.state, (n) => this.replayAttempt(n));
-    $('btn-repeat').disabled = $('btn-undo').disabled = !this.state.can_undo;
-    this.syncPlayButton();
+    renderAttempts(
+      this.state,
+      (n) => this.replayAttempt(n),
+      this.mode === 'playback' ? this.activeAttemptN : null,
+    );
+    const canRepeat = this.state.can_undo || this.mode === 'playback';
+    $('btn-repeat').disabled = $('btn-undo').disabled = !canRepeat;
+    this.syncShotPanelLock();
+    this.syncPlaybackControls();
+    this.syncModeButtons();
+  }
+
+  syncShotPanelLock() {
+    const locked = this.mode === 'playback' || this.isLiveShotRolling();
+    $('shot-panel').classList.toggle('disabled-panel', locked);
+    $('power').disabled = locked;
+    $('theta').disabled = locked;
+    $('btn-shoot').disabled = locked;
+    if (this.spinPad) this.spinPad.disabled = locked;
+    document.querySelectorAll('.spin-presets button').forEach((btn) => {
+      btn.disabled = locked;
+    });
+  }
+
+  syncPlaybackControls() {
+    const canReplay = this.hasReplay();
+    const pbBtn = $('mode-toggle')?.querySelector?.('button[data-mode="playback"]');
+    if (pbBtn) pbBtn.disabled = !canReplay;
+
+    $('pl-play').disabled = !canReplay;
+    $('pl-speed').disabled = !canReplay;
+    $('pl-scrub').disabled = !canReplay;
+
+    if (!canReplay) {
+      $('pl-play').textContent = '▶';
+      $('pl-scrub').value = 0;
+      $('pl-scrub').max = 1;
+      $('pl-time').textContent = '0.0 / 0.0 s';
+      return;
+    }
+
+    $('pl-play').textContent = (this.playback.frames && this.playback.playing) ? '❚❚' : '▶';
+
+    let curTime = 0;
+    let totalDur = 0;
+    if (this.playback.frames) {
+      curTime = Math.max(0, this.playback.time);
+      totalDur = this.playback.duration || 0;
+    } else {
+      const n = (this.activeAttemptN && this.attemptShots.has(this.activeAttemptN))
+        ? this.activeAttemptN
+        : this.latestAttemptN();
+      const payload = this.attemptShots.get(n);
+      totalDur = payload?.duration || 0;
+      curTime = 0;
+    }
+    if (!this._scrubbing) {
+      $('pl-scrub').max = totalDur || 1;
+      $('pl-scrub').value = curTime;
+      $('pl-time').textContent = `${curTime.toFixed(1)} / ${totalDur.toFixed(1)} s`;
+    }
   }
 
   syncPlayButton() {
-    $('pl-play').textContent = this.playback.playing ? '❚❚' : '▶';
+    this.syncPlaybackControls();
+  }
+
+  togglePlayback() {
+    if (!this.hasReplay()) return;
+    if (this.mode !== 'playback' || !this.playback.frames) {
+      this.replayLast();
+      return;
+    }
+    if (this.playback.playing) this.playback.pause();
+    else this.playback.play();
+    this.syncPlayButton();
   }
 
   // ---------- aim ----------
@@ -294,8 +389,11 @@ class App {
   }
 
   applyShot(payload) {
+    this._savedLiveAim = null;
+    this.mode = 'aim';
     this.applyState(payload.state);
     this.attemptShots.set(payload.attempt.n, payload);
+    this.activeAttemptN = payload.attempt.n;
     if (this.attemptShots.size > 40) {
       this.attemptShots.delete(this.attemptShots.keys().next().value);
     }
@@ -304,12 +402,16 @@ class App {
     this._firedEvents = 0;
     this.playback.load(payload);
     this.refreshUI();
-    this.syncPlayButton();
   }
 
   onShotEnd() {
-    const { potted, cue_potted, attempt } = this.lastShotInfo();
     this.syncPlayButton();
+    this.syncShotPanelLock();
+    if (this.mode === 'playback') {
+      this.refreshUI();
+      return;
+    }
+    const { potted, cue_potted, attempt } = this.lastShotInfo();
     const buttons = [
       { label: '↺ Repeat (R)', accent: true, onClick: () => this.repeatSituation() },
       { label: '◎ Go to cue (C)', onClick: () => { hideBanner(); this.focusCueBall(); } },
@@ -319,6 +421,7 @@ class App {
         label: 'Respawn cue',
         onClick: async () => {
           this.applyState(await api.respawnCue());
+          this.clearAttemptHistory();
           this.playback.clear();
           this.afterSituationChange('cue ball respawned');
           this.focusCueBall();
@@ -351,6 +454,7 @@ class App {
   async startFullRack() {
     try {
       this.applyState(await api.setDrill('rack'));
+      this.clearAttemptHistory();
       this.afterSituationChange('new game — 15 white balls racked');
       this.focusCueBall({ alignAim: true });
     } catch (err) {
@@ -359,9 +463,31 @@ class App {
   }
 
   async repeatSituation() {
-    if (!this.state.can_undo) { toast('nothing to repeat yet'); return; }
+    const fromPlayback = this.mode === 'playback';
+    const playbackAim = fromPlayback ? { ...this.aim.params() } : null;
+    const playbackCueId = fromPlayback ? this.playback.shotCue?.cueBallId : null;
+
+    if (!this.state.can_undo && !fromPlayback) {
+      toast('nothing to repeat yet');
+      return;
+    }
     try {
-      this.applyState(await api.undo());
+      this._savedLiveAim = null;
+      this.mode = 'aim';
+      if (this.state.can_undo) {
+        this.applyState(await api.undo());
+      }
+      if (fromPlayback && playbackAim) {
+        this.state.aim = { ...playbackAim };
+        if (playbackCueId && this.state.balls.some((b) => b.id === playbackCueId)) {
+          this.cueBallId = playbackCueId;
+          this.focusBallId = playbackCueId;
+          this.state.cue_ball_id = playbackCueId;
+          for (const b of this.state.balls) b.is_cue = (b.id === playbackCueId);
+          api.setCueBall(playbackCueId).catch(() => {});
+        }
+        api.aim(playbackAim).catch(() => {});
+      }
       this.afterSituationChange('situation restored — same ball, same angle');
     } catch (err) {
       toast(err.message, 'error');
@@ -369,28 +495,56 @@ class App {
   }
 
   afterSituationChange(msg) {
+    this._savedLiveAim = null;
+    if (this.mode === 'playback') this.mode = 'aim';
     this.playback.clear();
     hideBanner();
     Object.assign(this.aim, this.state.aim);
     this.spinPad.set(this.aim.a, this.aim.b);
+    this.updateControls();
     this.refreshUI();
     if (msg) toast(msg);
   }
 
-  replayLast() { this.replayAttempt(Math.max(...this.attemptShots.keys(), 0)); }
-
-  replayAttempt(n) {
+  enterPlaybackForAttempt(n, { autoPlay = true } = {}) {
     const payload = this.attemptShots.get(n);
-    if (!payload) { toast('attempt frames are gone (page was loaded)'); return; }
+    if (!payload) {
+      toast('attempt frames are gone (page was loaded)');
+      return false;
+    }
+    if (this.mode !== 'playback') {
+      this._savedLiveAim = { ...this.aim.params() };
+    }
+    this.activeAttemptN = n;
+    this.mode = 'playback';
     hideBanner();
     this.ripples = [];
     this.pocketFlashes = [];
     this._firedEvents = 0;
     this.playback.load(payload);
-    this.playback.pause();
-    this.playback.seek(0);
-    this.playback.play();
-    this.syncPlayButton();
+    if (!autoPlay) {
+      this.playback.pause();
+      this.playback.seek(0);
+    }
+    if (payload.attempt?.params) {
+      Object.assign(this.aim, payload.attempt.params);
+      this.spinPad.set(this.aim.a, this.aim.b);
+    }
+    this.updateControls();
+    this.refreshUI();
+    return true;
+  }
+
+  replayLast() {
+    const n = (this.activeAttemptN && this.attemptShots.has(this.activeAttemptN))
+      ? this.activeAttemptN
+      : this.latestAttemptN();
+    if (!n) { toast('no shots to replay yet'); return; }
+    this.replayAttempt(n);
+  }
+
+  replayAttempt(n) {
+    this.enterPlaybackForAttempt(n, { autoPlay: true });
   }
 
   // ---------- ball editing ----------
@@ -403,6 +557,7 @@ class App {
   async moveBall(id, xy) {
     try {
       this.applyState(await api.moveBall(id, xy));
+      this.clearAttemptHistory();
       this.afterSituationChange(null);
     } catch (err) {
       toast(err.message, 'error');
@@ -413,6 +568,7 @@ class App {
     try {
       const res = await api.addBall(xy);
       this.applyState(res.state);
+      this.clearAttemptHistory();
       this.afterSituationChange(`added ball ${res.id}`);
     } catch (err) {
       toast(err.message, 'error');
@@ -422,6 +578,7 @@ class App {
   async removeBall(id) {
     try {
       this.applyState(await api.removeBall(id));
+      this.clearAttemptHistory();
       this.afterSituationChange(`removed ball ${id}`);
     } catch (err) {
       toast(err.message, 'error');
@@ -498,25 +655,54 @@ class App {
       wrap.style.cursor = 'crosshair';
       return;
     }
-    const cameraFree = this.mode === 'place' ? !this.dragPreview : !this.shiftHeld;
+    const cameraFree = this.mode === 'place'
+      ? !this.dragPreview
+      : (this.mode === 'playback' ? true : !this.shiftHeld);
     this.r3d.setInteractive(cameraFree);
     wrap.style.cursor = this.mode === 'place'
       ? 'move'
-      : (this.shiftHeld ? 'crosshair' : 'grab');
+      : (this.mode === 'aim' && this.shiftHeld ? 'crosshair' : 'grab');
+  }
+
+  syncModeButtons() {
+    for (const btn of $('mode-toggle').querySelectorAll('button')) {
+      btn.classList.toggle('on', btn.dataset.mode === this.mode);
+    }
+    if (this.mode === 'place') {
+      setHint('drag balls to move · click cloth to add · right-click to remove · M to aim');
+    } else if (this.mode === 'playback') {
+      setHint('Playback mode · space plays/pauses · drag slider to scrub · Aim or Esc to exit · R to repeat this shot');
+    } else {
+      setHint('Shift+drag aims · drag orbits · click any ball to shoot with it · space to shoot');
+    }
   }
 
   setMode(mode) {
+    if (mode === 'playback') {
+      if (!this.hasReplay()) return;
+      if (this.mode !== 'playback' || !this.playback.frames) {
+        this.replayLast();
+      }
+      return;
+    }
+    const wasPlayback = this.mode === 'playback';
     this.mode = mode;
-    for (const btn of $('mode-toggle').querySelectorAll('button')) {
-      btn.classList.toggle('on', btn.dataset.mode === mode);
+    if (wasPlayback) {
+      if (this._savedLiveAim) {
+        Object.assign(this.aim, this._savedLiveAim);
+        this.spinPad.set(this.aim.a, this.aim.b);
+        this._savedLiveAim = null;
+      }
+      this.playback.clear();
     }
     this.updateControls();
-    setHint(mode === 'place'
-      ? 'drag balls to move · click cloth to add · right-click to remove · M to aim'
-      : 'Shift+drag aims · drag orbits · click any ball to shoot with it · space to shoot');
+    this.refreshUI();
   }
 
-  toggleMode() { this.setMode(this.mode === 'aim' ? 'place' : 'aim'); }
+  toggleMode() {
+    if (this.mode === 'playback') this.setMode('aim');
+    else this.setMode(this.mode === 'aim' ? 'place' : 'aim');
+  }
   showHelp() { $('help').showModal(); }
 
   // ---------- render loop ----------
@@ -548,10 +734,11 @@ class App {
   }
 
   buildScene() {
-    const playing = this.playback.frames &&
-      (this.playback.playing || this._scrubbing || this.playback.time < this.playback.duration - 1e-3);
+    const inPlayback = this.mode === 'playback' && !!this.playback.frames;
+    const liveRolling = this.isLiveShotRolling();
+    const playing = Boolean(inPlayback || liveRolling);
     let balls;
-    if (this.playback.frames && !this.dragPreview) {
+    if (playing && !this.dragPreview) {
       balls = this.playback.visualBalls(this.staticBalls(), this.pocketById(),
                                         this.viewMode === '2d');
     } else {
@@ -571,7 +758,7 @@ class App {
       aim = {
         cue: sc.xy,
         ballR: this.ballRadius,
-        stick: this.aim.stickGeometry(sc.xy, sc.params, 0),
+        stick: this.aim.stickGeometry(sc.xy, sc.params, this.playback.cuePull()),
         ...sc.params,
         showLine: false,
         showSpin: false,
@@ -583,7 +770,7 @@ class App {
       focus: this.computeFocus(balls),
       aim,
       trails: this.playback.trailPts,
-      trailsOn: $('trails').checked && !!this.playback.frames,
+      trailsOn: $('trails').checked && playing,
       ripples: this.ripples,
       pocketFlashes: this.pocketFlashes,
       now: performance.now() / 1000,
@@ -616,15 +803,7 @@ class App {
       // keep the loop alive; scene may recover after a view change
     }
 
-    if (this.playback.frames) {
-      $('pl-scrub').disabled = false;
-      if (!this._scrubbing) {
-        $('pl-scrub').value = this.playback.time;
-        $('pl-scrub').max = this.playback.duration || 1;
-        $('pl-time').textContent =
-          `${this.playback.time.toFixed(1)} / ${this.playback.duration.toFixed(1)} s`;
-      }
-    }
+    this.syncPlaybackControls();
     requestAnimationFrame(() => this.frame());
   }
 }

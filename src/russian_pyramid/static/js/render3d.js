@@ -522,13 +522,13 @@ export class Renderer3D {
     this.aimGroup.visible = show;
     if (!show) return;
 
-    const { cue, dir: aimDir, lineEnd, stick, ballR } = aim;
+    const { cue, dir: aimDir, lineStart, lineEnd, stick, ballR } = aim;
     const showLine = aim.showLine !== false && !!lineEnd;
     this.aimLine.visible = showLine;
     if (showLine) {
       const zA = Y0 + ballR;
-      const startX = aimDir ? cue[0] + aimDir[0] * (ballR + 0.004) : cue[0];
-      const startY = aimDir ? cue[1] + aimDir[1] * (ballR + 0.004) : cue[1];
+      const startX = lineStart ? lineStart[0] : (aimDir ? cue[0] + aimDir[0] * (ballR + 0.004) : cue[0]);
+      const startY = lineStart ? lineStart[1] : (aimDir ? cue[1] + aimDir[1] * (ballR + 0.004) : cue[1]);
       this.aimLine.geometry.setFromPoints([
         new THREE.Vector3(startX, zA, startY),
         new THREE.Vector3(lineEnd[0], zA, lineEnd[1]),

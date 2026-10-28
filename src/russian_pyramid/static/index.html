@@ -5,22 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Russian Pyramid — Test Ground</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='22' r='11' fill='%23f2c94c'/%3E%3Ccircle cx='21' cy='42' r='11' fill='%23f5efe0'/%3E%3Ccircle cx='43' cy='42' r='11' fill='%23f5efe0'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=10">
+  <link rel="stylesheet" href="/css/app.css?v=13">
   <script type="importmap">
     {
       "imports": {
         "three": "/vendor/three.module.js",
         "three/addons/": "/vendor/unmapped/",
         "three/addons/controls/": "/vendor/",
-        "/js/aim.js": "/js/aim.js?v=10",
-        "/js/api.js": "/js/api.js?v=10",
-        "/js/geometry.js": "/js/geometry.js?v=10",
-        "/js/interact.js": "/js/interact.js?v=10",
-        "/js/main.js": "/js/main.js?v=10",
-        "/js/playback.js": "/js/playback.js?v=10",
-        "/js/render.js": "/js/render.js?v=10",
-        "/js/render3d.js": "/js/render3d.js?v=10",
-        "/js/ui.js": "/js/ui.js?v=10"
+        "/js/aim.js": "/js/aim.js?v=13",
+        "/js/api.js": "/js/api.js?v=13",
+        "/js/geometry.js": "/js/geometry.js?v=13",
+        "/js/interact.js": "/js/interact.js?v=13",
+        "/js/main.js": "/js/main.js?v=13",
+        "/js/playback.js": "/js/playback.js?v=13",
+        "/js/render.js": "/js/render.js?v=13",
+        "/js/render3d.js": "/js/render3d.js?v=13",
+        "/js/ui.js": "/js/ui.js?v=13"
       }
     }
   </script>
@@ -47,6 +47,7 @@
       <div class="seg" id="mode-toggle" title="M">
         <button data-mode="aim" class="on">Aim</button>
         <button data-mode="place">Place balls</button>
+        <button data-mode="playback" disabled>Playback</button>
       </div>
       <button id="btn-rack" class="btn" title="Start from scratch with all 15 white balls racked (N)">▲ New rack (15)</button>
       <button id="btn-focus-cue" class="btn" title="Move camera to the cue ball (C)">◎ Cue ball</button>
@@ -96,14 +97,14 @@
       <section class="panel" id="playback-panel">
         <h2>Playback</h2>
         <div class="row">
-          <button id="pl-play" class="btn" title="P">▶</button>
-          <select id="pl-speed">
+          <button id="pl-play" class="btn" title="P" disabled>▶</button>
+          <select id="pl-speed" disabled>
             <option value="0.25">0.25×</option>
             <option value="0.5">0.5×</option>
             <option value="1" selected>1×</option>
             <option value="2">2×</option>
           </select>
-          <span id="pl-time" class="mono"></span>
+          <span id="pl-time" class="mono">0.0 / 0.0 s</span>
         </div>
         <input id="pl-scrub" type="range" min="0" max="1" step="0.001" value="0" disabled>
       </section>
@@ -142,7 +143,7 @@
     <button id="help-close" class="btn">Close</button>
   </dialog>
 
-  <script type="module" src="/js/main.js?v=10"></script>
+  <script type="module" src="/js/main.js?v=13"></script>
   <script>
     // Runtime probe for headless debugging: append ?debug=1 to the URL and a
     // green #debug-out line reports renderer/canvas/rAF status after load.

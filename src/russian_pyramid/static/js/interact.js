@@ -3,7 +3,9 @@
 // renderers; pointer handlers ignore events that didn't land on the active
 // canvas (banner, hints, etc.).
 
-import { angleDeg } from './geometry.js';
+import { angleDeg, normAngleDeg, rad2deg } from './geometry.js';
+
+const MIN_AIM_PIVOT_R = 0.22; // minimum effective lever arm (m) for smooth relative aiming
 
 export class Interact {
   constructor(wrapper, app) {
@@ -65,13 +67,14 @@ export class Interact {
     }
 
     // aim mode: the plain drag belongs to the camera -- the cue moves when
-    // Shift is held (the headless 2D path always aims; it has no camera)
-    const canAim = this.app.viewMode === '2d' || e.shiftKey;
+    // Shift is held (the headless 2D path always aims; it has no camera).
+    // Start relative to the current aim angle without jumping on pointerdown.
+    const canAim = this.app.mode === 'aim' && !this.app.isLiveShotRolling() &&
+      (this.app.viewMode === '2d' || e.shiftKey);
     if (this.app.hasCue() && canAim) {
       this.dragAim = true;
+      this._last = xy;
       this.wrapper.setPointerCapture(e.pointerId);
-      const phi = this.phiFromCueSide(xy);
-      if (phi !== null) this.app.setAim({ phi });
     }
   }
 
@@ -87,12 +90,28 @@ export class Interact {
       this.app.onDragPreview(this.dragBall);
     } else if (this.dragAim) {
       const xy = this.tablePos(e);
-      const phi = xy ? this.phiFromCueSide(xy) : null;
-      if (phi !== null) {
-        this.moved = true;
-        this.app.setAim({ phi });
+      if (!xy) return;
+      if (this._last) {
+        const dPhi = this.deltaPhiFromDrag(this._last, xy);
+        if (Math.abs(dPhi) > 1e-6) {
+          this.moved = true;
+          this.app.setAim({ phi: normAngleDeg(this.app.aim.phi + dPhi) });
+        }
       }
+      this._last = xy;
     }
+  }
+
+  // Incremental angular change (degrees) around the cue ball from `prevXY` to
+  // `nextXY`, clamped at MIN_AIM_PIVOT_R so dragging near the ball stays smooth.
+  deltaPhiFromDrag(prevXY, nextXY) {
+    const cue = this.app.cueXY();
+    const rx = prevXY[0] - cue[0];
+    const ry = prevXY[1] - cue[1];
+    const dx = nextXY[0] - prevXY[0];
+    const dy = nextXY[1] - prevXY[1];
+    const denom = Math.max(rx * rx + ry * ry, MIN_AIM_PIVOT_R * MIN_AIM_PIVOT_R);
+    return rad2deg((rx * dy - ry * dx) / denom);
   }
 
   // Pointer is on the cue-stick side (behind the cue ball), so the shot
@@ -159,7 +178,7 @@ export class Interact {
 
   wheel(e) {
     if (!this.onCanvas(e)) return;
-    if (this.app.mode !== 'aim' || !this.app.hasCue()) return;
+    if (this.app.mode !== 'aim' || this.app.isLiveShotRolling() || !this.app.hasCue()) return;
     // the wheel zooms the camera; Shift+wheel (or dragging aim + wheel) sets power
     if (this.app.viewMode === '3d' && !e.shiftKey && !this.dragAim) return;
     e.preventDefault();
@@ -174,18 +193,26 @@ export class Interact {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
     const app = this.app;
     const coarse = e.shiftKey;
+    const canEditAim = app.mode === 'aim' && !app.isLiveShotRolling();
     switch (e.key) {
-      case ' ': e.preventDefault(); app.shoot(); break;
+      case ' ':
+        e.preventDefault();
+        if (app.mode === 'playback') app.togglePlayback();
+        else app.shoot();
+        break;
+      case 'Escape':
+        if (app.mode === 'playback') app.setMode('aim');
+        break;
       case 'r': case 'R': app.repeatSituation(); break;
       case 'u': case 'U': app.repeatSituation(); break;
       case 'p': case 'P': app.replayLast(); break;
-      case 'c': case 'C': app.focusCueBall(); break;
+      case 'c': case 'C': if (app.mode !== 'playback') app.focusCueBall(); break;
       case 'n': case 'N': app.startFullRack(); break;
       case 'm': case 'M': app.toggleMode(); break;
-      case 'ArrowLeft': e.preventDefault(); app.nudgeAim(coarse ? 0.5 : -0.05); break;
-      case 'ArrowRight': e.preventDefault(); app.nudgeAim(coarse ? -0.5 : 0.05); break;
-      case 'ArrowUp': e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); break;
-      case 'ArrowDown': e.preventDefault(); app.nudgePower(coarse ? -0.5 : -0.1); break;
+      case 'ArrowLeft': if (canEditAim) { e.preventDefault(); app.nudgeAim(coarse ? 0.5 : -0.05); } break;
+      case 'ArrowRight': if (canEditAim) { e.preventDefault(); app.nudgeAim(coarse ? -0.5 : 0.05); } break;
+      case 'ArrowUp': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); } break;
+      case 'ArrowDown': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? -0.5 : -0.1); } break;
       case '?': app.showHelp(); break;
       default: break;
     }

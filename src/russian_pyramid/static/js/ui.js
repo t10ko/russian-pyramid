@@ -20,7 +20,7 @@ export function updateStats(state) {
     <div class="stat"><b>${stats.scratches}</b><span>scratches</span></div>`;
 }
 
-export function renderAttempts(state, onReplay) {
+export function renderAttempts(state, onReplay, activeN = null) {
   const ul = $('attempts');
   ul.innerHTML = '';
   if (!state.attempts.length) {
@@ -32,6 +32,7 @@ export function renderAttempts(state, onReplay) {
   }
   for (const a of [...state.attempts].reverse()) {
     const li = document.createElement('li');
+    if (activeN === a.n) li.className = 'active';
     const cls = a.cue_potted ? 'scratch' : (a.potted.length ? 'pot' : 'miss');
     li.innerHTML = `
       <span class="n">#${a.n}</span>

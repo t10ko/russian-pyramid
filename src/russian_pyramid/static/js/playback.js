@@ -14,6 +14,8 @@ const ROLL_SPEED = 0.45;   // m/s while rolling into the hole (phase A)
 const ROLL_MAX = 0.35;     // s cap
 const SINK_TIME = 0.35;    // s to drop below the cloth (phase B)
 const SINK_DEPTH = -0.09;  // m, fully under the cloth
+const STROKE_TIME = 0.09;  // s of pre-impact cue wind-up + forward stroke
+const FOLLOW_TIME = 0.14;  // s of post-impact cue follow-through
 const DEFAULT_BALL_R = 0.034;
 
 export class Playback {
@@ -48,12 +50,34 @@ export class Playback {
       0,
     );
     this.duration = Math.max(shot.duration || 0, lastPotEnd);
-    this.time = 0;
+    this.time = -STROKE_TIME;
     this._firedIdx = 0;
     this.trailPts = {};
     this.quats = this._buildQuatFrames(this.frames, this.pottedEvents);
     this.playing = true;
     this.lastWallTime = performance.now();
+  }
+
+  // Pullback distance of the cue stick at the current playback time:
+  // draws back from the aiming position, accelerates into contact (pull = 0)
+  // at t = 0, then smoothly follows through after impact.
+  cuePull() {
+    const V0 = this.shotCue?.params?.V0 ?? 2.2;
+    const pullAim = 0.04 + 0.022 * V0;
+    const pullPeak = pullAim * 1.35 + 0.015;
+    if (this.time < 0) {
+      const u = Math.max(0, Math.min(1, (this.time + STROKE_TIME) / STROKE_TIME));
+      if (u < 0.35) {
+        const w = u / 0.35;
+        return pullAim + (pullPeak - pullAim) * Math.sin(w * Math.PI * 0.5);
+      }
+      const w = (u - 0.35) / 0.65;
+      return pullPeak * (1 - w * w);
+    }
+    const followMax = Math.min(0.06, 0.015 + 0.008 * V0);
+    const v = Math.max(0, Math.min(1, this.time / FOLLOW_TIME));
+    const ease = 1 - (1 - v) * (1 - v);
+    return -followMax * ease;
   }
 
   // Strip post-pocket frames where pooltool teleports a potted ball to
@@ -135,7 +159,7 @@ export class Playback {
   }
 
   seek(t) {
-    this.time = Math.max(0, Math.min(t, this.duration));
+    this.time = Math.max(-STROKE_TIME, Math.min(t, this.duration));
     this._firedIdx = this.events.findIndex((e) => e.t > this.time);
     if (this._firedIdx < 0) this._firedIdx = this.events.length;
     this.rebuildTrails();
@@ -143,6 +167,11 @@ export class Playback {
 
   play() {
     if (!this.frames) return;
+    if (this.time >= this.duration - 1e-3) {
+      this.time = -STROKE_TIME;
+      this._firedIdx = 0;
+      this.trailPts = {};
+    }
     this.playing = true;
     this.lastWallTime = performance.now();
   }
@@ -160,7 +189,7 @@ export class Playback {
            this.events[this._firedIdx].t <= this.time) {
       this._firedIdx++;
     }
-    this.pushTrail();
+    if (this.time >= 0) this.pushTrail();
 
     if (this.time >= this.duration) {
       this.time = this.duration;

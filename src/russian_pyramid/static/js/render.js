@@ -281,17 +281,18 @@ export class Renderer {
   }
 
   drawAim(g, scene, view) {
-    const { cue, lineEnd, showLine } = scene.aim;
+    const { cue, lineOrigin, lineEnd, showLine } = scene.aim;
     if (!cue) return;
 
     // cue line
     if (showLine !== false && lineEnd) {
+      const start = lineOrigin || cue;
       g.save();
       g.setLineDash([view.m(0.05), view.m(0.035)]);
       g.strokeStyle = 'rgba(255, 255, 255, 0.75)';
       g.lineWidth = Math.max(1.2, view.m(0.004));
       g.beginPath();
-      g.moveTo(view.cx(cue[1], cue[0]), view.cy(cue[1], cue[0]));
+      g.moveTo(view.cx(start[1], start[0]), view.cy(start[1], start[0]));
       g.lineTo(view.cx(lineEnd[1], lineEnd[0]), view.cy(lineEnd[1], lineEnd[0]));
       g.stroke();
       g.restore();

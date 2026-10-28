@@ -83,18 +83,27 @@ export class Aim {
     const R = this.ballR;
     const d = this.dir();
     const p = cueXY;
+    const s = [-d[1], d[0]];
+    const ca = Math.max(-MAX_SPIN_R, Math.min(MAX_SPIN_R, this.a || 0));
+    const sideOffset = R * ca;
+    const lineOrigin = [p[0] + s[0] * sideOffset, p[1] + s[1] * sideOffset];
+    const frontR = R * Math.sqrt(Math.max(0, 1 - ca * ca));
+    const lineStart = [
+      lineOrigin[0] + d[0] * (frontR + 0.004),
+      lineOrigin[1] + d[1] * (frontR + 0.004),
+    ];
 
-    // cushion intersection along direction d, ball-center limits
-    const minX = Math.min(R, p[0] - 0.02);
-    const maxX = Math.max(t.w - R, p[0] + 0.02);
-    const minY = Math.min(R, p[1] - 0.02);
-    const maxY = Math.max(t.l - R, p[1] + 0.02);
+    // cushion intersection along the cue's line (lineOrigin + t * d)
+    const minX = Math.min(R, lineOrigin[0] - 0.02);
+    const maxX = Math.max(t.w - R, lineOrigin[0] + 0.02);
+    const minY = Math.min(R, lineOrigin[1] - 0.02);
+    const maxY = Math.max(t.l - R, lineOrigin[1] + 0.02);
     let wallT = Infinity;
     const walls = [
-      d[0] > 1e-9 ? (maxX - p[0]) / d[0] : null,
-      d[0] < -1e-9 ? (minX - p[0]) / d[0] : null,
-      d[1] > 1e-9 ? (maxY - p[1]) / d[1] : null,
-      d[1] < -1e-9 ? (minY - p[1]) / d[1] : null,
+      d[0] > 1e-9 ? (maxX - lineOrigin[0]) / d[0] : null,
+      d[0] < -1e-9 ? (minX - lineOrigin[0]) / d[0] : null,
+      d[1] > 1e-9 ? (maxY - lineOrigin[1]) / d[1] : null,
+      d[1] < -1e-9 ? (minY - lineOrigin[1]) / d[1] : null,
     ];
     for (const wv of walls) {
       if (wv !== null && wv > 0 && wv < wallT) wallT = wv;
@@ -112,11 +121,11 @@ export class Aim {
     }
 
     const endT = hit ? hit.dist : wallT;
-    const lineEnd = [p[0] + d[0] * endT, p[1] + d[1] * endT];
+    const lineEnd = [lineOrigin[0] + d[0] * endT, lineOrigin[1] + d[1] * endT];
 
     let ghost = null, objDir = null, objBall = null;
     if (hit) {
-      ghost = lineEnd.slice();
+      ghost = [p[0] + d[0] * endT, p[1] + d[1] * endT];
       objBall = hit.ball;
       const ox = hit.ball.xy[0] - ghost[0];
       const oy = hit.ball.xy[1] - ghost[1];
@@ -130,6 +139,8 @@ export class Aim {
     return {
       cue: p,
       dir: d,
+      lineOrigin,
+      lineStart,
       lineEnd,
       ghost,
       objDir,
@@ -209,10 +220,12 @@ export class SpinPad {
     this.g = canvas.getContext('2d');
     this.a = 0;
     this.b = 0;
+    this.disabled = false;
     this.onChange = onChange;
     this.draw();
 
     const pos = (ev) => {
+      if (this.disabled) return;
       const rect = canvas.getBoundingClientRect();
       const scale = canvas.width / rect.width;
       const x = (ev.clientX - rect.left) * scale;
@@ -231,10 +244,16 @@ export class SpinPad {
     };
 
     let dragging = false;
-    canvas.addEventListener('pointerdown', (e) => { dragging = true; canvas.setPointerCapture(e.pointerId); pos(e); });
-    canvas.addEventListener('pointermove', (e) => { if (dragging) pos(e); });
+    canvas.addEventListener('pointerdown', (e) => {
+      if (this.disabled) return;
+      dragging = true;
+      canvas.setPointerCapture(e.pointerId);
+      pos(e);
+    });
+    canvas.addEventListener('pointermove', (e) => { if (dragging && !this.disabled) pos(e); });
     canvas.addEventListener('pointerup', () => { dragging = false; });
     canvas.addEventListener('dblclick', () => {
+      if (this.disabled) return;
       this.set(0, 0);
       this.onChange(0, 0);
     });
