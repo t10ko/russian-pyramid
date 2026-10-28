@@ -60,8 +60,6 @@ export class Interact {
       if (ball) {
         this.dragBall = { id: ball.id, offset: [ball.xy[0] - xy[0], ball.xy[1] - xy[1]], xy: ball.xy };
         this.wrapper.setPointerCapture(e.pointerId);
-      } else {
-        this.app.addBall(xy);
       }
       return;
     }
@@ -72,10 +70,8 @@ export class Interact {
     if (this.app.hasCue() && canAim) {
       this.dragAim = true;
       this.wrapper.setPointerCapture(e.pointerId);
-      if (ball && ball.id !== 'cue' && !this.app.nearCue(xy)) {
-        this.app.aimAtBall(ball);
-      }
-      this.app.setAim({ phi: this.phiToward(xy) });
+      const phi = this.phiFromCueSide(xy);
+      if (phi !== null) this.app.setAim({ phi });
     }
   }
 
@@ -89,35 +85,46 @@ export class Interact {
       ];
       this.moved = true;
       this.app.onDragPreview(this.dragBall);
-    } else if (this.dragAim && this.hasMovedEnough(e)) {
+    } else if (this.dragAim) {
       const xy = this.tablePos(e);
-      if (xy) this.app.setAim({ phi: this.phiToward(xy) });
+      const phi = xy ? this.phiFromCueSide(xy) : null;
+      if (phi !== null) {
+        this.moved = true;
+        this.app.setAim({ phi });
+      }
     }
   }
 
-  hasMovedEnough(e) {
-    if (!this._last) this._last = { x: e.clientX, y: e.clientY, live: false };
-    const d = Math.hypot(e.clientX - this._last.x, e.clientY - this._last.y);
-    if (d > 3) this._last.live = true;
-    return this._last.live;
+  // Pointer is on the cue-stick side (behind the cue ball), so the shot
+  // direction points from the pointer through the cue ball.
+  phiFromCueSide(xy) {
+    const cue = this.app.cueXY();
+    const dx = cue[0] - xy[0];
+    const dy = cue[1] - xy[1];
+    if (Math.hypot(dx, dy) < 1e-4) return null;
+    return angleDeg(dx, dy);
   }
 
   phiToward(xy) {
-    const cue = this.app.cueXY();
-    return angleDeg(xy[0] - cue[0], xy[1] - cue[1]);
+    return this.phiFromCueSide(xy);
   }
 
   up(e) {
     if (this.dragBall) {
       const { id, xy } = this.dragBall;
       this.app.moveBall(id, xy);
-    } else if (!this.moved && this._downAt && this.app.mode === 'aim' && !e?.shiftKey) {
-      // plain click (no drag, no Shift): focus the camera on that ball
+    } else if (!this.moved && this._downAt && !e?.shiftKey) {
       const dist = Math.hypot(e.clientX - this._downAt.x, e.clientY - this._downAt.y);
       if (dist < 5) {
         const xy = this.tablePos(e);
-        const ball = xy ? this.ballAt(xy) : null;
-        if (ball) this.app.setFocusBall(ball.id);
+        if (xy) {
+          const ball = this.ballAt(xy);
+          if (this.app.mode === 'place' && !ball) {
+            this.app.addBall(xy);
+          } else if (this.app.mode === 'aim' && ball) {
+            this.app.setFocusBall(ball.id);
+          }
+        }
       }
     }
     this.dragBall = null;
@@ -139,7 +146,7 @@ export class Interact {
     const xy = this.tablePos(e);
     if (!xy) return;
     const ball = this.ballAt(xy);
-    if (ball && ball.id !== 'cue') this.app.aimAtBall(ball, true);
+    if (ball && ball.id !== this.app.cueBallId) this.app.aimAtBall(ball, true);
   }
 
   altClick(e) {
@@ -153,11 +160,14 @@ export class Interact {
   wheel(e) {
     if (!this.onCanvas(e)) return;
     if (this.app.mode !== 'aim' || !this.app.hasCue()) return;
-    // the wheel zooms the camera; Shift+wheel sets power
-    if (this.app.viewMode === '3d' && !e.shiftKey) return;
+    // the wheel zooms the camera; Shift+wheel (or dragging aim + wheel) sets power
+    if (this.app.viewMode === '3d' && !e.shiftKey && !this.dragAim) return;
     e.preventDefault();
-    const step = e.shiftKey ? 0.5 : 0.1;
-    this.app.nudgePower(e.deltaY < 0 ? step : -step);
+    // macOS maps Shift+scroll to deltaX (leaving deltaY = 0), so inspect both axes
+    const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (Math.abs(delta) < 1e-6) return;
+    const step = 0.25;
+    this.app.nudgePower(delta < 0 ? step : -step);
   }
 
   key(e) {
@@ -169,8 +179,9 @@ export class Interact {
       case 'r': case 'R': app.repeatSituation(); break;
       case 'u': case 'U': app.repeatSituation(); break;
       case 'p': case 'P': app.replayLast(); break;
+      case 'c': case 'C': app.focusCueBall(); break;
+      case 'n': case 'N': app.startFullRack(); break;
       case 'm': case 'M': app.toggleMode(); break;
-      case 'a': case 'A': app.toggleAssist(); break;
       case 'ArrowLeft': e.preventDefault(); app.nudgeAim(coarse ? 0.5 : -0.05); break;
       case 'ArrowRight': e.preventDefault(); app.nudgeAim(coarse ? -0.5 : 0.05); break;
       case 'ArrowUp': e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); break;

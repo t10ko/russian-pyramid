@@ -167,6 +167,8 @@ globalThis.fetch = async (path, opts) => {
   const body = opts?.body ? JSON.parse(opts.body) : {};
   let payload;
   if (path === '/api/aim') payload = fixtures['/api/state'].aim;
+  else if (path === '/api/undo') payload = fixtures['/api/state'];
+  else if (path === '/api/cue-ball') payload = { ...fixtures['/api/state'], cue_ball_id: body.id };
   else if (fixtures[path]) payload = fixtures[path];
   else throw new Error(`unexpected fetch: ${path} ${JSON.stringify(body).slice(0, 80)}`);
   return { ok: true, status: 200, json: async () => payload };
@@ -199,13 +201,21 @@ app.nudgeAim(0.25);
 app.nudgePower(0.5);
 pumpFrames(3);
 
-// aim assist on -> predict fetch -> render with paths
-app.setAssist(true);
-await sleep(400);
+// spin clamp check: setting spin outside MAX_SPIN_R (0.50) clamps radius to <= 0.50
+app.setAim({ a: 0.9, b: 0.9 }, false);
+const spinR = Math.hypot(app.aim.a, app.aim.b);
+if (spinR > 0.501) {
+  violations.push(`spin was not clamped to MAX_SPIN_R: r=${spinR.toFixed(3)}`);
+}
+app.setAim({ a: 0, b: 0 }, false);
 pumpFrames(3);
 
-// shoot with the captured payload, run playback to completion at 2x
+// shoot with the captured payload, verify potted target ball "1" is visible at start of playback
 await app.shoot();
+const sceneAtShotStart = app.buildScene();
+if (!sceneAtShotStart.balls.some(b => b.id === '1')) {
+  violations.push('potted target ball "1" disappeared at the start of shot playback');
+}
 app.playback.speed = 2;
 let frames = 0;
 while ((app.playback.playing || app.playback.time < app.playback.duration) && frames < 2000) {
@@ -218,9 +228,41 @@ pumpFrames(5);
 await app.repeatSituation();
 pumpFrames(3);
 
+// choosing any ball ("1") switches the cue stick and active cueBallId to that ball
+app.setFocusBall('1');
+const sceneOn1 = app.buildScene();
+const ball1 = sceneOn1.balls.find((b) => b.id === '1');
+if (app.cueBallId !== '1' || !ball1?.isCue || !sceneOn1.aim ||
+    Math.hypot(sceneOn1.aim.cue[0] - ball1.xy[0], sceneOn1.aim.cue[1] - ball1.xy[1]) > 1e-6) {
+  violations.push('selecting ball "1" did not move the cue stick to ball "1"');
+}
+app.setFocusBall('cue');
+pumpFrames(2);
+
 // replay the attempt from history
 app.replayLast();
 pumpFrames(10);
+
+// verify ball rotation quaternions during playback
+const sceneMid = app.buildScene();
+for (const b of sceneMid.balls) {
+  if (!b.quat || Math.abs(b.quat[3] - 1) < 1e-4) {
+    violations.push(`ball ${b.id} did not rotate during playback`);
+  }
+}
+
+// verify 3D table + Russian Pyramid pocket geometry builds cleanly
+const { Renderer3D } = await import(
+  pathToFileURL(new URL('../src/russian_pyramid/static/js/render3d.js', import.meta.url).pathname).href
+);
+const r3dTest = Object.create(Renderer3D.prototype);
+r3dTest.cloth = 'green';
+r3dTest.ballR = app.ballRadius;
+r3dTest.scene = { add() {} };
+r3dTest._table(app.table);
+if (!r3dTest.tableGroup || r3dTest.tableGroup.children.length < 30) {
+  violations.push('3D table pocket/cushion geometry missing meshes');
+}
 
 // ---------------------------------------------------------------- verdict
 const required = ['arc', 'arcTo', 'fillRect', 'createRadialGradient', 'drawImage'];

@@ -81,7 +81,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.end_headers()
         self.wfile.write(body)
 
@@ -153,6 +155,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif route == "/api/respawn-cue":
                 with session.lock:
                     session.respawn_cue()
+                    self._json(session.state(include_table=False))
+            elif route == "/api/cue-ball":
+                with session.lock:
+                    session.set_cue_ball(str(body["id"]))
                     self._json(session.state(include_table=False))
             else:
                 self._json({"error": "not found"}, 404)

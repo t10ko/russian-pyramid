@@ -56,6 +56,7 @@ class PracticeSession:
                  physics_preset: str = config.DEFAULT_PHYSICS_PRESET):
         self.lock = threading.RLock()
         self.physics_preset = physics_preset
+        self.cue_ball_id: str = config.CUE_BALL_ID
         self.set_drill(drill, init=True)
 
     # -- setup ---------------------------------------------------------------
@@ -66,11 +67,12 @@ class PracticeSession:
         self.positions: dict[str, tuple[float, float]] = {
             bid: (float(x), float(y)) for bid, (x, y) in spec["balls"].items()
         }
+        self.cue_ball_id = config.CUE_BALL_ID
         self.cue = CueParams(phi=spec.get("aim_hint", 90.0))
         self._new_situation()
 
     def _new_situation(self) -> None:
-        self.pre_shot: tuple[dict, dict] | None = None
+        self.pre_shot: tuple[dict, dict, str] | None = None
         self.attempts: list[Attempt] = []
 
     def set_physics_preset(self, preset: str) -> None:
@@ -122,13 +124,26 @@ class PracticeSession:
         if ball_id not in self.positions:
             raise ValueError(f"no ball {ball_id!r}")
         del self.positions[ball_id]
+        if self.cue_ball_id == ball_id:
+            self.cue_ball_id = (
+                config.CUE_BALL_ID
+                if config.CUE_BALL_ID in self.positions
+                else next(iter(self.positions), config.CUE_BALL_ID)
+            )
         self._new_situation()
 
     def set_layout(self, balls: dict[str, tuple[float, float]]) -> None:
         positions = {bid: (float(x), float(y)) for bid, (x, y) in balls.items()}
         self._validate_layout(positions)
         self.positions = positions
+        if self.cue_ball_id not in self.positions:
+            self.cue_ball_id = config.CUE_BALL_ID
         self._new_situation()
+
+    def set_cue_ball(self, ball_id: str) -> None:
+        if ball_id not in self.positions:
+            raise ValueError(f"no ball {ball_id!r} on table")
+        self.cue_ball_id = ball_id
 
     def respawn_cue(self) -> None:
         """Put the cue ball back after a scratch, at the head spot (nudged free)."""
@@ -146,11 +161,14 @@ class PracticeSession:
         positions[config.CUE_BALL_ID] = spot
         self._validate_layout(positions)
         self.positions = positions
+        self.cue_ball_id = config.CUE_BALL_ID
         self._new_situation()
 
     # -- shooting -------------------------------------------------------------
 
     def set_aim(self, params: dict) -> None:
+        if "cue_ball_id" in params and params["cue_ball_id"] in self.positions:
+            self.cue_ball_id = str(params["cue_ball_id"])
         for key in ("V0", "phi", "theta", "a", "b"):
             if key in params and params[key] is not None:
                 setattr(self.cue, key, float(params[key]))
@@ -160,11 +178,13 @@ class PracticeSession:
         with self.lock:
             if params:
                 self.set_aim(params)
-            if config.CUE_BALL_ID not in self.positions:
-                raise ShotError("the cue ball is in the pocket -- respawn it first")
+            if self.cue_ball_id not in self.positions:
+                raise ShotError("the selected cue ball is in the pocket -- pick another ball or respawn cue")
             aim = self.cue.as_dict()
-            self.pre_shot = (dict(self.positions), dict(aim))
-            result = physics.simulate(self.positions, aim, self.physics_preset)
+            self.pre_shot = (dict(self.positions), dict(aim), self.cue_ball_id)
+            result = physics.simulate(
+                self.positions, aim, self.physics_preset, cue_ball_id=self.cue_ball_id
+            )
             cushion_hits = sum(1 for e in result.events
                                if e["type"] in ("cushion", "jaw"))
             attempt = Attempt(
@@ -185,7 +205,7 @@ class PracticeSession:
         with self.lock:
             if params:
                 self.set_aim(params)
-            if config.CUE_BALL_ID not in self.positions:
+            if self.cue_ball_id not in self.positions:
                 return {"paths": {}, "potted": [], "duration": 0.0}
             return physics.predict_paths(self.positions, self.cue.as_dict(),
                                          self.physics_preset)
@@ -195,9 +215,10 @@ class PracticeSession:
         with self.lock:
             if self.pre_shot is None:
                 raise ValueError("nothing to repeat yet")
-            positions, aim = self.pre_shot
+            positions, aim, cue_ball_id = self.pre_shot
             self.positions = {bid: (x, y) for bid, (x, y) in positions.items()}
             self.cue = CueParams(**aim)
+            self.cue_ball_id = cue_ball_id if cue_ball_id in self.positions else config.CUE_BALL_ID
             self.pre_shot = None
 
     # -- serialization ---------------------------------------------------------
@@ -219,14 +240,15 @@ class PracticeSession:
             "drills": drills.catalog(),
             "physics_preset": self.physics_preset,
             "physics_presets": {k: dict(v) for k, v in config.PHYSICS_PRESETS.items()},
+            "cue_ball_id": self.cue_ball_id,
             "balls": [
-                {"id": bid, "xy": [round(x, 4), round(y, 4)], "is_cue": bid == config.CUE_BALL_ID}
+                {"id": bid, "xy": [round(x, 4), round(y, 4)], "is_cue": bid == self.cue_ball_id}
                 for bid, (x, y) in sorted(self.positions.items())
             ],
             "ball_radius": config.BALL_R,
             "aim": self.cue.as_dict(),
             "can_undo": self.pre_shot is not None,
-            "cue_on_table": config.CUE_BALL_ID in self.positions,
+            "cue_on_table": self.cue_ball_id in self.positions,
             "attempts": [asdict(a) for a in self.attempts],
             "stats": {
                 "shots": len(self.attempts),

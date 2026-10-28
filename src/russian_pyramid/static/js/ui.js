@@ -1,5 +1,7 @@
 // DOM helpers: toasts, stats, attempts list, banner, controls.
 
+import { v0ToPercent, formatShotPower } from './aim.js';
+
 export function $(id) { return document.getElementById(id); }
 
 export function toast(msg, kind = 'info', ms = 2600) {
@@ -35,8 +37,8 @@ export function renderAttempts(state, onReplay) {
       <span class="n">#${a.n}</span>
       <span class="dot ${cls}"></span>
       <span>${a.cue_potted ? 'scratch' : (a.potted.length ? `potted ${a.potted.join(', ')}` : 'missed')}</span>
-      <span class="meta">${a.params.V0.toFixed(1)} m/s</span>`;
-    li.title = `φ ${a.params.phi.toFixed(2)}° · V0 ${a.params.V0.toFixed(2)} m/s · ` +
+      <span class="meta">${v0ToPercent(a.params.V0)}%</span>`;
+    li.title = `φ ${a.params.phi.toFixed(2)}° · ${formatShotPower(a.params.V0)} · ` +
                `spin (${a.params.a.toFixed(2)}, ${a.params.b.toFixed(2)}) · ${a.duration.toFixed(1)} s`;
     li.addEventListener('click', () => onReplay(a.n));
     ul.appendChild(li);

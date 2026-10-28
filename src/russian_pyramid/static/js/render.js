@@ -246,7 +246,7 @@ export class Renderer {
 
     // body
     const grad = g.createRadialGradient(cx - r * 0.4, cy - r * 0.45, r * 0.1, cx, cy, r * 1.05);
-    if (b.isCue) {
+    if (b.id === 'cue') {
       grad.addColorStop(0, '#fbe28a');
       grad.addColorStop(0.55, '#f2c94c');
       grad.addColorStop(1, '#b98f1e');
@@ -264,7 +264,7 @@ export class Renderer {
     g.stroke();
 
     // number badge
-    if (!b.isCue && b.id !== 'cue' && r > 7) {
+    if (b.id !== 'cue' && r > 7) {
       const nr = r * 0.44;
       g.beginPath();
       g.arc(cx, cy, nr, 0, TAU);
@@ -277,14 +277,6 @@ export class Renderer {
       g.fillText(b.id, cx, cy + r * 0.02);
     }
 
-    // spin indicator on the cue ball
-    if (b.isCue && scene.aim && scene.showSpin && r > 6) {
-      const { a, b: spinB } = scene.aim;
-      g.beginPath();
-      g.arc(cx + a * r * 0.62, cy - spinB * r * 0.62, Math.max(2, r * 0.14), 0, TAU);
-      g.fillStyle = '#d64541';
-      g.fill();
-    }
     g.restore();
   }
 

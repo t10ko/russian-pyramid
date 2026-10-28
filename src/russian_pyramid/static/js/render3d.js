@@ -15,13 +15,16 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const Y0 = 0.062;             // world height of the cloth surface
 const CUSHION_H = 0.043;
-const WOOD_TOP = 0.055;       // top of the wood slab (just under the cloth)
+const WOOD_TOP = 0.055;       // top of the slate/bed under the cloth
 const WOOD_COLOR = 0x4a2f1d;
-const LEATHER = 0x3a2417;
+const WOOD_DARK = 0x2c1b10;
+const LEATHER = 0x2f1c11;
+const LEATHER_RIM = 0x3d2416;
+const BRASS = 0xc89b3c;
 const CLOTHS = {
-  green: { felt: 0x0d7048, cushion: 0x0a6140 },
-  blue: { felt: 0x1362a0, cushion: 0x10578c },
-  red: { felt: 0x9c3038, cushion: 0x8a2a31 },
+  green: { felt: 0x0d7048, cushion: 0x0a6140, throat: 0x07452c },
+  blue: { felt: 0x1362a0, cushion: 0x10578c, throat: 0x0b3d64 },
+  red: { felt: 0x9c3038, cushion: 0x8a2a31, throat: 0x5c1b20 },
 };
 
 export class Renderer3D {
@@ -64,6 +67,8 @@ export class Renderer3D {
 
     this._ballMeshes = new Map();
     this._textures = new Map();
+    this._camGoal = null;
+    this.controls.addEventListener('start', () => { this._camGoal = null; });
     this.setCamera('tv');
   }
 
@@ -102,88 +107,119 @@ export class Renderer3D {
     this._dims = { w: t.w, l: t.l };
     const g = new THREE.Group();
     const cloth = CLOTHS[this.cloth];
+    const w = t.w, l = t.l, cw = t.cushion_width;
+    const wood = 0.085;
+    const railTop = Y0 + CUSHION_H;
 
-    // wood slab + cloth: slab top at WOOD_TOP, cloth box on top, surface at Y0
-    const fw = t.w + 2 * (t.cushion_width + 0.085);
-    const fl = t.l + 2 * (t.cushion_width + 0.085);
-    const slab = new THREE.Mesh(
-      new THREE.BoxGeometry(fw, WOOD_TOP - 0.005, fl),
-      new THREE.MeshStandardMaterial({ color: WOOD_COLOR, roughness: 0.55, metalness: 0.08 }),
+    // Exact Russian Pyramid mouth & jaw parameters matching pooltool specs:
+    // 72.5 mm corner throat (cNose = 0.0725 / √2 = 0.05127 m, 45° jaws, 10 mm rounded horns),
+    // 82.0 mm side mouth (sNose = 0.0398 m with 14 mm rounded horns + 5° splay -> 82.0 mm gap).
+    const cNose = 0.05127;
+    const cBack = cNose - cw;           // -0.00373: 45° jaw outer corner at distance cw
+    const sNose = 0.0398;
+    const sBack = 0.0446;
+
+    const pocketSpecs = buildPocketSpecs(w, l, cw, cNose, cBack, sNose, sBack);
+
+    // 1. Lower wooden frame / slate bed with the 6 pocket holes cut through
+    const bedShape = roundedRectShape(-cw - wood, -cw - wood, w + 2 * (cw + wood), l + 2 * (cw + wood), 0.075);
+    for (const ps of pocketSpecs) {
+      bedShape.holes.push(pocketCutoutPath(ps, 0.001));
+    }
+    const slab = extrudeTableShape(
+      bedShape,
+      WOOD_TOP,
+      WOOD_TOP - 0.005,
+      new THREE.MeshStandardMaterial({ color: WOOD_DARK, roughness: 0.65, metalness: 0.06 }),
     );
-    slab.position.set(t.w / 2, (WOOD_TOP - 0.005) / 2 + 0.005, t.l / 2);
     slab.receiveShadow = true;
     g.add(slab);
 
-    const felt = new THREE.Mesh(
-      new THREE.BoxGeometry(t.w, Y0 - WOOD_TOP, t.l),
+    // 2. Playing cloth (felt) with the 6 Russian Pyramid pocket cutouts
+    // (concave fall-edge / скат лузы between the jaw horns + open throat & well)
+    const feltPad = cw + wood * 0.72;
+    const feltShape = roundedRectShape(-feltPad, -feltPad, w + 2 * feltPad, l + 2 * feltPad, 0.05);
+    for (const ps of pocketSpecs) {
+      feltShape.holes.push(pocketCutoutPath(ps, 0));
+    }
+    const felt = extrudeTableShape(
+      feltShape,
+      Y0,
+      Y0 - WOOD_TOP,
       new THREE.MeshStandardMaterial({ color: cloth.felt, roughness: 0.95 }),
     );
-    felt.position.set(t.w / 2, (Y0 + WOOD_TOP) / 2, t.l / 2);
     felt.receiveShadow = true;
     g.add(felt);
 
-    // cushions: a box per physics segment, placed on the outer side
-    const cmat = new THREE.MeshStandardMaterial({ color: cloth.cushion, roughness: 0.9 });
-    const cx = t.w / 2, cy = t.l / 2;
-    for (const seg of t.linear_segments) {
-      const p1 = seg.p1, p2 = seg.p2;
-      const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
-      const mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2;
-      const dx = Math.abs(mx - cx) > Math.abs(my - cy) ? Math.sign(mx - cx) : 0;
-      const dy = dx === 0 ? Math.sign(my - cy) : 0;
-      const off = t.cushion_width / 2;
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(
-          dx !== 0 ? t.cushion_width : len,
-          CUSHION_H,
-          dy !== 0 ? t.cushion_width : len),
+    // Subtle beveled cloth lip (скат лузы) around each pocket cutout
+    const throatMat = new THREE.MeshStandardMaterial({ color: cloth.throat, roughness: 0.95 });
+    for (const ps of pocketSpecs) {
+      const lipRing = pocketLipShape(ps);
+      const lip = extrudeTableShape(lipRing, Y0 - 0.0004, 0.006, throatMat);
+      g.add(lip);
+    }
+
+    // 3. Six cloth-covered cushions with rounded Russian Pyramid jaw horns
+    // (губки луз) and smooth 45° corner / splayed side jaw walls
+    const cmat = new THREE.MeshStandardMaterial({ color: cloth.cushion, roughness: 0.88 });
+    const cushionSpecs = buildCushionPolygons(w, l, cw, cNose, cBack, sNose, sBack);
+    for (const { pts, radii } of cushionSpecs) {
+      const mesh = extrudeTableShape(
+        roundedPolyToShape(pts, radii),
+        railTop - 0.0035,
+        CUSHION_H - 0.0025,
         cmat,
+        { bevelEnabled: true, bevelThickness: 0.0035, bevelSize: 0.003, bevelOffset: -0.003, bevelSegments: 4 },
       );
-      box.position.set(mx + dx * off, Y0 + CUSHION_H / 2 - 0.004, my + dy * off);
-      box.castShadow = true;
-      box.receiveShadow = true;
-      g.add(box);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
     }
 
-    // jaw caps: leather horns where the cushions end
-    const jmat = new THREE.MeshStandardMaterial({ color: LEATHER, roughness: 0.75 });
-    for (const seg of t.circular_segments) {
-      const jaw = new THREE.Mesh(
-        new THREE.CylinderGeometry(Math.max(seg.radius, 0.006),
-                                    Math.max(seg.radius, 0.006), CUSHION_H, 12),
-        jmat,
-      );
-      jaw.position.set(seg.center[0], Y0 + CUSHION_H / 2 - 0.004, seg.center[1]);
-      jaw.castShadow = true;
-      g.add(jaw);
-    }
-
-    // pockets: recessed dark slots shaped like real pyramid pockets --
-    // an extruded stadium whose visible part is the mouth between the jaws;
-    // the rest hides under the cloth edge, cushions and rails
-    const holeMat = new THREE.MeshStandardMaterial({
-      color: 0x050403, roughness: 1,
+    // 4. Six raised wooden rail caps (поручни бортов) behind the cushions,
+    // terminating cleanly at the 6 pocket brackets
+    const railMat = new THREE.MeshStandardMaterial({
+      color: WOOD_COLOR, roughness: 0.48, metalness: 0.08,
     });
-    const bisectors = {
-      lb: [1, 1], lt: [1, -1], rb: [-1, 1], rt: [-1, -1],
-    };
-    for (const p of t.pockets) {
-      const corner = !!bisectors[p.id];
-      const halfLen = corner ? 0.075 : 0.055;   // along the slot
-      const halfWid = corner ? 0.0475 : 0.033;  // across the mouth
-      const shape = stadium(halfLen, halfWid);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.055, bevelEnabled: false });
-      geo.rotateX(Math.PI / 2);   // shape plane onto the cloth, extrude down
-      const slot = new THREE.Mesh(geo, holeMat);
-      const d = corner
-        ? bisectors[p.id].map((v) => v / Math.SQRT2)
-        : [0, 1];                  // side slots run along the rail
-      slot.rotation.y = Math.atan2(-d[1], d[0]);
-      slot.position.set(p.center[0], Y0 - 0.0015, p.center[1]);
-      g.add(slot);
+    const railPolys = buildWoodenRailPolygons(w, l, cw, wood, cNose, sNose);
+    for (const poly of railPolys) {
+      const mesh = extrudeTableShape(
+        polyToShape(poly),
+        railTop - 0.0015,
+        CUSHION_H + (Y0 - WOOD_TOP) - 0.001,
+        railMat,
+        { bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0015, bevelOffset: -0.0015, bevelSegments: 2 },
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
     }
 
-    // sights (diamonds) on the wood, level with the slab top
+    // 5. Six Russian Pyramid pockets: deep dark well + net basket, leather jaw
+    // facings (губы), curved leather apron/hood (пелерина), and brass bracket (скоба)
+    const holeMat = new THREE.MeshStandardMaterial({
+      color: 0x040303, roughness: 1, side: THREE.DoubleSide,
+    });
+    const netMat = new THREE.MeshStandardMaterial({
+      color: 0x1d130c, roughness: 0.9, side: THREE.DoubleSide,
+    });
+    const leatherMat = new THREE.MeshStandardMaterial({
+      color: LEATHER, roughness: 0.58, metalness: 0.05,
+    });
+    const leatherRimMat = new THREE.MeshStandardMaterial({
+      color: LEATHER_RIM, roughness: 0.52, metalness: 0.06,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: BRASS, roughness: 0.30, metalness: 0.75,
+    });
+
+    for (const ps of pocketSpecs) {
+      buildRussianPocket(g, ps, railTop, {
+        holeMat, netMat, leatherMat, leatherRimMat, brassMat,
+      });
+    }
+
+    // 6. Diamond sights inlaid flush on top of the wooden rails
     const dmat = new THREE.MeshStandardMaterial({
       color: 0xe8dcc0, roughness: 0.35, metalness: 0.2,
     });
@@ -191,19 +227,19 @@ export class Renderer3D {
       const d = new THREE.Mesh(new THREE.CircleGeometry(0.010, 4), dmat);
       d.rotation.x = -Math.PI / 2;
       d.rotation.z = Math.PI / 4;
-      d.position.set(x, WOOD_TOP + 0.0006, y);
+      d.position.set(x, railTop + 0.0006, y);
       g.add(d);
     };
     for (let i = 1; i < 8; i++) {
       if (i === 4) continue;
       const y = (i / 8) * t.l;
-      const off = t.cushion_width + 0.045;
+      const off = t.cushion_width + 0.042;
       sight(0 - off, y);
       sight(t.w + off, y);
     }
     for (let i = 1; i < 4; i++) {
       const x = (i / 4) * t.w;
-      const off = t.cushion_width + 0.045;
+      const off = t.cushion_width + 0.042;
       sight(x, 0 - off);
       sight(x, t.l + off);
     }
@@ -257,9 +293,6 @@ export class Renderer3D {
     this.aimGroup = new THREE.Group();
     this.scene.add(this.aimGroup);
 
-    this.assistGroup = new THREE.Group();
-    this.scene.add(this.assistGroup);
-
     this.trailGroup = new THREE.Group();
     this.scene.add(this.trailGroup);
 
@@ -268,8 +301,17 @@ export class Renderer3D {
 
     this.aimLine = new THREE.Line(
       new THREE.BufferGeometry(),
-      new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.045, gapSize: 0.03 }),
+      new THREE.LineDashedMaterial({
+        color: 0xffffff,
+        dashSize: 0.045,
+        gapSize: 0.03,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+      }),
     );
+    this.aimLine.frustumCulled = false;
+    this.aimLine.renderOrder = 2;
     this.aimGroup.add(this.aimLine);
 
     this.stick = buildCueStick();
@@ -291,6 +333,7 @@ export class Renderer3D {
 
   setCamera(preset) {
     this.preset = preset;
+    this._camGoal = null;
     const { w, l } = this._dims;
     if (preset === 'top') {
       this.camera.position.set(w / 2 + 0.0001, Y0 + 3.6, l / 2);
@@ -302,9 +345,42 @@ export class Renderer3D {
     this.controls.update();
   }
 
-  // Keep the orbit pivot on the followed ball (table coords + z).
+  // Move the orbit pivot (and camera) to focus on a ball at table (x, y, z).
+  // Does NOT run automatically during shots; only called when framing a ball.
+  focusOn(x, y, z, { smooth = true, phi = null } = {}) {
+    const ny = Y0 + Math.max(z ?? this.ballR, 0);
+    if (this.preset === 'top') {
+      this.setCamera('top');
+      return;
+    }
+    const target = new THREE.Vector3(x, ny, y);
+    let pos;
+    if (typeof phi === 'number') {
+      const rad = (phi * Math.PI) / 180;
+      const curOffset = this.camera.position.clone().sub(this.controls.target);
+      const horizDist = Math.max(0.85, Math.min(Math.hypot(curOffset.x, curOffset.z) || 1.15, 1.45));
+      const height = Math.max(0.75, Math.min(curOffset.y || 1.35, 1.65));
+      pos = new THREE.Vector3(
+        x - Math.cos(rad) * horizDist,
+        ny + height,
+        y - Math.sin(rad) * horizDist,
+      );
+    } else {
+      const offset = this.camera.position.clone().sub(this.controls.target);
+      pos = target.clone().add(offset);
+    }
+    if (smooth) {
+      this._camGoal = { target, pos };
+    } else {
+      this._camGoal = null;
+      this.controls.target.copy(target);
+      this.camera.position.copy(pos);
+      this.controls.update();
+    }
+  }
+
   follow(x, y, z) {
-    this.controls.target.set(x, Y0 + Math.max(z ?? this.ballR, 0), y);
+    this.focusOn(x, y, z, { smooth: false });
   }
 
   // ---------- frame -------------------------------------------------------
@@ -320,11 +396,19 @@ export class Renderer3D {
   draw(scene) {
     this._syncBalls(scene.balls);
     this._syncAim(scene);
-    this._syncAssist(scene.assist);
     this._syncTrails(scene);
     this._syncFx(scene);
-    if (scene.focus) {
-      this.follow(scene.focus.xy[0], scene.focus.xy[1], scene.focus.z);
+    if (this._camGoal) {
+      this.controls.target.lerp(this._camGoal.target, 0.22);
+      this.camera.position.lerp(this._camGoal.pos, 0.22);
+      if (this.controls.target.distanceTo(this._camGoal.target) < 0.002 &&
+          this.camera.position.distanceTo(this._camGoal.pos) < 0.002) {
+        this.controls.target.copy(this._camGoal.target);
+        this.camera.position.copy(this._camGoal.pos);
+        this._camGoal = null;
+      }
+    }
+    if (scene.focus && !scene.playing) {
       this.focusRing.position.set(scene.focus.xy[0], Y0 + 0.002, scene.focus.xy[1]);
       this.focusRing.visible = true;
     } else {
@@ -344,12 +428,16 @@ export class Renderer3D {
         mesh = new THREE.Mesh(
           new THREE.SphereGeometry(this.ballR, 32, 24),
           new THREE.MeshStandardMaterial({
-            map: this._ballTexture(b.id, b.isCue),
+            map: this._ballTexture(b.id, b.id === 'cue'),
             roughness: 0.18, metalness: 0.05,
           }),
         );
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        mesh.userData.baseQuat = new THREE.Quaternion();
+        mesh.userData.shotQuat = new THREE.Quaternion();
+        mesh.userData.hadShotQuat = false;
+        mesh.userData.lastXY = [b.xy[0], b.xy[1]];
         this._ballMeshes.set(b.id, mesh);
         this.ballGroup.add(mesh);
       }
@@ -358,6 +446,34 @@ export class Renderer3D {
       mesh.scale.setScalar(b.scale ?? 1);
       mesh.material.opacity = b.alpha ?? 1;
       mesh.material.transparent = (b.alpha ?? 1) < 0.999;
+
+      if (b.quat) {
+        mesh.userData.shotQuat.set(b.quat[0], b.quat[1], b.quat[2], b.quat[3]);
+        mesh.quaternion.multiplyQuaternions(mesh.userData.shotQuat, mesh.userData.baseQuat);
+        mesh.userData.hadShotQuat = true;
+        mesh.userData.lastXY = [b.xy[0], b.xy[1]];
+      } else {
+        if (mesh.userData.hadShotQuat) {
+          mesh.userData.baseQuat.copy(mesh.quaternion);
+          mesh.userData.hadShotQuat = false;
+        }
+        const prev = mesh.userData.lastXY;
+        if (prev) {
+          const dx = b.xy[0] - prev[0];
+          const dy = b.xy[1] - prev[1];
+          const dist = Math.hypot(dx, dy);
+          if (dist > 1e-5 && dist < 0.5) {
+            const rx = dy / this.ballR;
+            const rz = -dx / this.ballR;
+            const angle = Math.hypot(rx, rz);
+            const axis = new THREE.Vector3(rx / angle, 0, rz / angle);
+            const dq = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+            mesh.userData.baseQuat.premultiply(dq).normalize();
+          }
+        }
+        mesh.userData.lastXY = [b.xy[0], b.xy[1]];
+        mesh.quaternion.copy(mesh.userData.baseQuat);
+      }
     }
     for (const [id, mesh] of this._ballMeshes) {
       if (!seen.has(id)) {
@@ -373,13 +489,8 @@ export class Renderer3D {
     c.width = 256; c.height = 128;
     const g = c.getContext('2d');
     if (isCue) {
-      g.fillStyle = '#f2c94c';
-      g.fillRect(0, 0, 256, 128);
-      const grad = g.createLinearGradient(0, 0, 256, 0);
-      grad.addColorStop(0, 'rgba(255,255,255,0.25)');
-      grad.addColorStop(0.5, 'rgba(0,0,0,0)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.18)');
-      g.fillStyle = grad;
+      // Pure, seamless amber-yellow phenolic cue ball (zero spots, dots, or seams)
+      g.fillStyle = '#e8be3e';
       g.fillRect(0, 0, 256, 128);
     } else {
       g.fillStyle = '#f5efe0';
@@ -411,14 +522,17 @@ export class Renderer3D {
     this.aimGroup.visible = show;
     if (!show) return;
 
-    const { cue, lineEnd, stick, ballR } = aim;
+    const { cue, dir: aimDir, lineEnd, stick, ballR } = aim;
 
     const zA = Y0 + ballR;
+    const startX = aimDir ? cue[0] + aimDir[0] * (ballR + 0.004) : cue[0];
+    const startY = aimDir ? cue[1] + aimDir[1] * (ballR + 0.004) : cue[1];
     this.aimLine.geometry.setFromPoints([
-      new THREE.Vector3(cue[0], zA, cue[1]),
+      new THREE.Vector3(startX, zA, startY),
       new THREE.Vector3(lineEnd[0], zA, lineEnd[1]),
     ]);
     this.aimLine.computeLineDistances();
+    this.aimLine.geometry.computeBoundingSphere();
 
     // stick: mesh origin is its tip end, so anchor it at the TIP point and
     // aim its local +Y (tip direction) from butt toward tip
@@ -432,24 +546,6 @@ export class Renderer3D {
     const dir = tip.clone().sub(butt).normalize();   // butt -> tip (+Y local)
     this.stick.position.copy(tip);
     this.stick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-  }
-
-  _syncAssist(paths) {
-    this.assistGroup.clear();
-    if (!paths) return;
-    for (const [id, path] of Object.entries(paths)) {
-      const pts = path.xyz;
-      if (!pts || pts.length < 2) continue;
-      const verts = pts.map((p) => new THREE.Vector3(p[0], Y0 + (p[2] || 0) + 0.004, p[1]));
-      const geo = new THREE.BufferGeometry().setFromPoints(verts);
-      const mat = id === 'cue'
-        ? new THREE.LineBasicMaterial({ color: 0xf2c94c, transparent: true, opacity: 0.65 })
-        : new THREE.LineDashedMaterial({ color: 0xffffff, transparent: true, opacity: 0.4,
-                                         dashSize: 0.05, gapSize: 0.04 });
-      const line = new THREE.Line(geo, mat);
-      if (mat.isLineDashedMaterial) line.computeLineDistances();
-      this.assistGroup.add(line);
-    }
   }
 
   _syncTrails(scene) {
@@ -510,16 +606,329 @@ export class Renderer3D {
   }
 }
 
-// Stadium (rounded-slot) shape centered at origin, long axis on X.
-function stadium(halfLen, halfWid) {
-  const r = halfWid;
+// ---------- Russian Pyramid table & pocket geometry builders ----------------
+
+// Extrude a 2D shape defined in table (x, y) coordinates so its top face sits
+// at world y = topY and extrudes downward by `height`.
+function extrudeTableShape(shape, topY, height, material, extra = {}) {
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: height,
+    bevelEnabled: false,
+    curveSegments: 24,
+    ...extra,
+  });
+  geo.rotateX(Math.PI / 2);
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.position.y = topY;
+  return mesh;
+}
+
+function roundedRectShape(x, y, w, h, r) {
   const s = new THREE.Shape();
-  const lx = halfLen - halfWid;
-  s.moveTo(-lx, -halfWid);
-  s.lineTo(lx, -halfWid);
-  s.absarc(lx, 0, r, -Math.PI / 2, Math.PI / 2, false);
-  s.lineTo(-lx, halfWid);
-  s.absarc(-lx, 0, r, Math.PI / 2, Math.PI * 1.5, false);
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.absarc(x + w - r, y + r, r, -Math.PI / 2, 0, false);
+  s.lineTo(x + w, y + h - r);
+  s.absarc(x + w - r, y + h - r, r, 0, Math.PI / 2, false);
+  s.lineTo(x + r, y + h);
+  s.absarc(x + r, y + h - r, r, Math.PI / 2, Math.PI, false);
+  s.lineTo(x, y + r);
+  s.absarc(x + r, y + r, r, Math.PI, Math.PI * 1.5, false);
+  s.closePath();
+  return s;
+}
+
+function polyToShape(pts) {
+  const s = new THREE.Shape();
+  s.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
+  s.closePath();
+  return s;
+}
+
+// Build a THREE.Shape from polygon vertices `pts` with circular-arc fillet
+// radius `radii[i]` at each vertex `i` (used for the rounded pocket jaw horns).
+function roundedPolyToShape(pts, radii, arcSteps = 16) {
+  const n = pts.length;
+  const s = new THREE.Shape();
+  let started = false;
+  const moveOrLine = (x, y) => {
+    if (!started) { s.moveTo(x, y); started = true; }
+    else s.lineTo(x, y);
+  };
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n];
+    const curr = pts[i];
+    const next = pts[(i + 1) % n];
+    const r = radii?.[i] ?? 0;
+    const dx1 = prev[0] - curr[0], dy1 = prev[1] - curr[1];
+    const dx2 = next[0] - curr[0], dy2 = next[1] - curr[1];
+    const len1 = Math.hypot(dx1, dy1), len2 = Math.hypot(dx2, dy2);
+    if (r <= 1e-5 || len1 < 1e-5 || len2 < 1e-5) {
+      moveOrLine(curr[0], curr[1]);
+      continue;
+    }
+    const u1x = dx1 / len1, u1y = dy1 / len1;
+    const u2x = dx2 / len2, u2y = dy2 / len2;
+    const cosA = Math.max(-0.999, Math.min(0.999, u1x * u2x + u1y * u2y));
+    const halfAngle = 0.5 * Math.acos(cosA);
+    const tanHalf = Math.tan(halfAngle);
+    const sinHalf = Math.sin(halfAngle);
+    if (tanHalf < 1e-4 || sinHalf < 1e-4) {
+      moveOrLine(curr[0], curr[1]);
+      continue;
+    }
+    const maxDist = 0.45 * Math.min(len1, len2);
+    const d = Math.min(r / tanHalf, maxDist);
+    const rEff = d * tanHalf;
+    const t1x = curr[0] + u1x * d, t1y = curr[1] + u1y * d;
+    const t2x = curr[0] + u2x * d, t2y = curr[1] + u2y * d;
+    const bx = u1x + u2x, by = u1y + u2y;
+    const bLen = Math.hypot(bx, by) || 1;
+    const cDist = rEff / sinHalf;
+    const cx = curr[0] + (bx / bLen) * cDist;
+    const cy = curr[1] + (by / bLen) * cDist;
+    const a1 = Math.atan2(t1y - cy, t1x - cx);
+    const a2 = Math.atan2(t2y - cy, t2x - cx);
+    const da = Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1));
+    moveOrLine(t1x, t1y);
+    for (let k = 1; k <= arcSteps; k++) {
+      const a = a1 + (da * k) / arcSteps;
+      s.lineTo(cx + Math.cos(a) * rEff, cy + Math.sin(a) * rEff);
+    }
+  }
+  s.closePath();
+  return s;
+}
+
+// Six cushion polygons in table (x, y) with per-vertex rounding radii:
+// 10 mm rounded corner jaw horns (72.5 mm throat) and 14 mm rounded side jaw
+// horns (82.0 mm mouth).
+function buildCushionPolygons(w, l, cw, cNose, cBack, sNose, sBack) {
+  const my = l / 2;
+  const rC = 0.010;
+  const rS = 0.014;
+  const rB = 0.004;
+  return [
+    // left-bottom long cushion
+    { pts: [[-cw, cBack], [0, cNose], [0, my - sNose], [-cw, my - sBack]], radii: [rB, rC, rS, rB] },
+    // left-top long cushion
+    { pts: [[-cw, my + sBack], [0, my + sNose], [0, l - cNose], [-cw, l - cBack]], radii: [rB, rS, rC, rB] },
+    // right-bottom long cushion
+    { pts: [[w + cw, cBack], [w, cNose], [w, my - sNose], [w + cw, my - sBack]], radii: [rB, rC, rS, rB] },
+    // right-top long cushion
+    { pts: [[w + cw, my + sBack], [w, my + sNose], [w, l - cNose], [w + cw, l - cBack]], radii: [rB, rS, rC, rB] },
+    // bottom (head) short cushion
+    { pts: [[cBack, -cw], [cNose, 0], [w - cNose, 0], [w - cBack, -cw]], radii: [rB, rC, rC, rB] },
+    // top (foot) short cushion
+    { pts: [[cBack, l + cw], [cNose, l], [w - cNose, l], [w - cBack, l + cw]], radii: [rB, rC, rC, rB] },
+  ];
+}
+
+// Six wooden rail sections (поручни) behind the cushions, stopping at each
+// pocket bracket.
+function buildWoodenRailPolygons(w, l, cw, wood, cNose, sNose) {
+  const my = l / 2;
+  const rOut = cw + wood;
+  const cIn = 0.036;                    // where wood rail meets corner bracket at cw
+  const cOut = cIn - wood * 0.55;       // angled end across the wood rail
+  const sEnd = sNose + 0.016;           // where wood rail meets side bracket
+  return [
+    // left-bottom rail
+    [[-rOut, cOut], [-cw, cIn], [-cw, my - sEnd], [-rOut, my - sEnd]],
+    // left-top rail
+    [[-rOut, my + sEnd], [-cw, my + sEnd], [-cw, l - cIn], [-rOut, l - cOut]],
+    // right-bottom rail
+    [[w + rOut, cOut], [w + cw, cIn], [w + cw, my - sEnd], [w + rOut, my - sEnd]],
+    // right-top rail
+    [[w + rOut, my + sEnd], [w + cw, my + sEnd], [w + cw, l - cIn], [w + rOut, l - cOut]],
+    // bottom short rail
+    [[cOut, -rOut], [cIn, -cw], [w - cIn, -cw], [w - cOut, -rOut]],
+    // top short rail
+    [[cOut, l + rOut], [cIn, l + cw], [w - cIn, l + cw], [w - cOut, l + rOut]],
+  ];
+}
+
+// Descriptor for each of the 6 Russian Pyramid pockets in its local (s, t)
+// coordinate frame: origin at the corner / rail midpoint, `u` pointing outward
+// into the pocket, `v` across the mouth (90° CCW from `u`).
+function buildPocketSpecs(w, l, cw, cNose, cBack, sNose, sBack) {
+  const s2 = Math.SQRT1_2;
+  const cornerIn = -cNose * s2 + 0.006;         // -0.0302 m (inside rounded jaw horn line)
+  const cornerOut = (2 * cw - cNose) * s2;      // +0.0415 m (outer jaw end at cw)
+  const cornerHalf = cNose * s2;                //  0.03625 m (half of 72.5 mm corner throat)
+  const corners = [
+    { id: 'lb', origin: [0, 0], u: [-s2, -s2] },
+    { id: 'lt', origin: [0, l], u: [-s2, s2] },
+    { id: 'rb', origin: [w, 0], u: [s2, -s2] },
+    { id: 'rt', origin: [w, l], u: [s2, s2] },
+  ].map((c) => ({
+    ...c,
+    corner: true,
+    v: [-c.u[1], c.u[0]],
+    sIn: cornerIn,
+    sLip: cornerIn + 0.015,     // concave slate/cloth fall-edge (скат лузы)
+    sOut: cornerOut,
+    halfMouth: cornerHalf,
+    halfBack: cornerHalf,
+    sWell: cornerOut + 0.007,   // circular drop basket center behind the jaws
+    rWell: 0.039,               // 78 mm basket diameter (snug behind 72.5 mm throat)
+  }));
+
+  const sides = [
+    { id: 'lc', origin: [0, l / 2], u: [-1, 0] },
+    { id: 'rc', origin: [w, l / 2], u: [1, 0] },
+  ].map((s) => ({
+    ...s,
+    corner: false,
+    v: [-s.u[1], s.u[0]],
+    sIn: 0.005,
+    sLip: -0.009,               // shallow concave fall-edge between side jaw horns
+    sOut: cw * 0.78,
+    halfMouth: 0.041,           // half of 82.0 mm side pocket mouth
+    halfBack: sBack,
+    sWell: cw * 0.82,
+    rWell: 0.043,               // 86 mm basket diameter behind 82.0 mm side mouth
+  }));
+
+  return [...corners, ...sides];
+}
+
+function pocketPt(ps, s, t) {
+  return [
+    ps.origin[0] + ps.u[0] * s + ps.v[0] * t,
+    ps.origin[1] + ps.u[1] * s + ps.v[1] * t,
+  ];
+}
+
+// 2D Path of the pocket opening (straight jaw throat + circular well + concave
+// cloth fall-edge between the jaw horns).
+function pocketCutoutPath(ps, pad = 0, target = new THREE.Path()) {
+  const hm = ps.halfMouth + pad;
+  const hb = ps.halfBack + pad;
+  const rw = ps.rWell + pad;
+  const sIn = ps.sIn - pad * 0.5;
+  const sOut = ps.sOut;
+  const sWell = ps.sWell;
+
+  const pStart = pocketPt(ps, sIn, -hm);
+  target.moveTo(pStart[0], pStart[1]);
+
+  // -t straight jaw wall from horn to back of cushion
+  const pJawNeg = pocketPt(ps, sOut, -hb);
+  target.lineTo(pJawNeg[0], pJawNeg[1]);
+
+  // circular pocket basket behind the jaws
+  const a0 = -Math.asin(Math.min(0.99, hb / rw));
+  const a1 = -a0;
+  const steps = 22;
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + ((a1 - a0) * i) / steps;
+    const s = sWell + Math.cos(a) * rw;
+    const t = Math.sin(a) * rw;
+    const p = pocketPt(ps, s, t);
+    target.lineTo(p[0], p[1]);
+  }
+
+  // +t straight jaw wall back to +t horn
+  const pJawPos = pocketPt(ps, sOut, hb);
+  target.lineTo(pJawPos[0], pJawPos[1]);
+  const pEnd = pocketPt(ps, sIn, hm);
+  target.lineTo(pEnd[0], pEnd[1]);
+
+  // concave slate/cloth fall-edge (скат лузы) across the mouth
+  const pCtrl = pocketPt(ps, ps.sLip - pad * 0.5, 0);
+  target.quadraticCurveTo(pCtrl[0], pCtrl[1], pStart[0], pStart[1]);
+  target.closePath();
+  return target;
+}
+
+function pocketLipShape(ps) {
+  const outer = pocketCutoutPath(ps, 0.0025, new THREE.Shape());
+  outer.holes.push(pocketCutoutPath(ps, -0.001, new THREE.Path()));
+  return outer;
+}
+
+// Build a complete Russian Pyramid pocket: recessed dark drop well, net basket
+// straps/rings, leather jaw facings (губы), curved leather apron/hood
+// (пелерина), and polished brass bracket (скоба).
+function buildRussianPocket(group, ps, railTop, mats) {
+  const wellDepth = 0.115;
+
+  // 1. Deep dark pocket well wall + bottom disc
+  const wellOuter = pocketCutoutPath(ps, 0.004, new THREE.Shape());
+  wellOuter.holes.push(pocketCutoutPath(ps, -0.0005, new THREE.Path()));
+  const wellWall = extrudeTableShape(wellOuter, Y0 - 0.0008, wellDepth, mats.holeMat);
+  group.add(wellWall);
+
+  const bottomShape = pocketCutoutPath(ps, 0.003, new THREE.Shape());
+  const bottom = extrudeTableShape(bottomShape, Y0 - wellDepth, 0.004, mats.holeMat);
+  group.add(bottom);
+
+  // 2. Leather-and-cord net basket rings inside the well
+  for (const h of [0.028, 0.056, 0.084]) {
+    const ringShape = pocketArcBandShape(ps, ps.rWell - 0.002, ps.rWell + 0.003, -Math.PI * 0.62, Math.PI * 0.62);
+    const ring = extrudeTableShape(ringShape, Y0 - h, 0.005, mats.netMat);
+    group.add(ring);
+  }
+
+  // 3. Curved leather pocket apron / guard (кожаная пелерина) wrapping the back
+  // of the pocket from one cushion/rail end to the other
+  const maxAng = ps.corner ? Math.PI * 0.66 : Math.PI * 0.58;
+  const apronBody = pocketArcBandShape(ps, ps.rWell - 0.001, ps.rWell + 0.022, -maxAng, maxAng);
+  const apronMesh = extrudeTableShape(
+    apronBody,
+    railTop + 0.0015,
+    CUSHION_H + (Y0 - WOOD_TOP) + 0.010,
+    mats.leatherMat,
+    { bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.0015, bevelOffset: -0.0015, bevelSegments: 2 },
+  );
+  apronMesh.castShadow = true;
+  apronMesh.receiveShadow = true;
+  group.add(apronMesh);
+
+  // Raised leather hood rim (высокая пелерина) around the back arc to catch hard shots
+  const hoodAng = ps.corner ? Math.PI * 0.56 : Math.PI * 0.50;
+  const hoodShape = pocketArcBandShape(ps, ps.rWell + 0.002, ps.rWell + 0.015, -hoodAng, hoodAng);
+  const hoodMesh = extrudeTableShape(
+    hoodShape,
+    railTop + 0.0085,
+    0.009,
+    mats.leatherRimMat,
+    { bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.0015, bevelOffset: -0.001, bevelSegments: 2 },
+  );
+  hoodMesh.castShadow = true;
+  group.add(hoodMesh);
+
+  // 5. Polished brass pocket bracket (латунная скоба) hugging the outer rim of
+  // the leather apron and anchoring into the adjacent wooden rails
+  const bracketAng = ps.corner ? Math.PI * 0.72 : Math.PI * 0.66;
+  const bracketShape = pocketArcBandShape(ps, ps.rWell + 0.019, ps.rWell + 0.033, -bracketAng, bracketAng);
+  const bracketMesh = extrudeTableShape(
+    bracketShape,
+    railTop + 0.001,
+    0.018,
+    mats.brassMat,
+    { bevelEnabled: true, bevelThickness: 0.0012, bevelSize: 0.001, bevelOffset: -0.0008, bevelSegments: 2 },
+  );
+  bracketMesh.castShadow = true;
+  group.add(bracketMesh);
+}
+
+// Horseshoe / arc-band shape in table (x, y) around a pocket's circular well.
+function pocketArcBandShape(ps, rInner, rOuter, aStart, aEnd, steps = 26) {
+  const s = new THREE.Shape();
+  for (let i = 0; i <= steps; i++) {
+    const a = aStart + ((aEnd - aStart) * i) / steps;
+    const p = pocketPt(ps, ps.sWell + Math.cos(a) * rOuter, Math.sin(a) * rOuter);
+    if (i === 0) s.moveTo(p[0], p[1]);
+    else s.lineTo(p[0], p[1]);
+  }
+  for (let i = steps; i >= 0; i--) {
+    const a = aStart + ((aEnd - aStart) * i) / steps;
+    const p = pocketPt(ps, ps.sWell + Math.cos(a) * rInner, Math.sin(a) * rInner);
+    s.lineTo(p[0], p[1]);
+  }
   s.closePath();
   return s;
 }

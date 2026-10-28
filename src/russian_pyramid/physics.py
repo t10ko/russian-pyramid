@@ -50,11 +50,12 @@ def build_system(
     cue_params: dict,
     table: pt.Table | None = None,
     physics_preset: str = config.DEFAULT_PHYSICS_PRESET,
+    cue_ball_id: str = config.CUE_BALL_ID,
 ) -> pt.System:
     table = table or config.build_table(physics_preset)
     params = config.ball_params(physics_preset)
     balls = {bid: pt.Ball.create(bid, xy=xy, **params) for bid, xy in positions.items()}
-    cue = pt.Cue(cue_ball_id=config.CUE_BALL_ID)
+    cue = pt.Cue(cue_ball_id=cue_ball_id, specs=config.cue_specs())
     system = pt.System(table=table, balls=balls, cue=cue)
     system.cue.set_state(
         V0=float(cue_params["V0"]),
@@ -62,22 +63,26 @@ def build_system(
         theta=float(cue_params.get("theta", 0.0)),
         a=float(cue_params.get("a", 0.0)),
         b=float(cue_params.get("b", 0.0)),
+        cue_ball_id=cue_ball_id,
     )
     return system
 
 
 def simulate(positions: dict[str, tuple[float, float]], cue_params: dict,
-             physics_preset: str = config.DEFAULT_PHYSICS_PRESET) -> ShotResult:
+             physics_preset: str = config.DEFAULT_PHYSICS_PRESET,
+             cue_ball_id: str = config.CUE_BALL_ID) -> ShotResult:
     """Simulate a shot and pack everything the UI needs."""
-    system = build_system(positions, cue_params, physics_preset=physics_preset)
+    system = build_system(
+        positions, cue_params, physics_preset=physics_preset, cue_ball_id=cue_ball_id
+    )
     try:
         pt.simulate(system, inplace=True, continuous=True, dt=_FRAME_DT)
     except Exception as exc:  # numba asserts, degenerate overlaps, ...
         raise ShotError(f"pooltool could not simulate this shot: {exc}") from exc
-    return _pack(system)
+    return _pack(system, cue_ball_id=cue_ball_id)
 
 
-def _pack(system: pt.System) -> ShotResult:
+def _pack(system: pt.System, cue_ball_id: str = config.CUE_BALL_ID) -> ShotResult:
     ball_ids = set(system.balls)
     frames: dict[str, dict] = {}
     for bid, ball in system.balls.items():
@@ -89,6 +94,11 @@ def _pack(system: pt.System) -> ShotResult:
                 [round(float(x), 4), round(float(y), 4), round(float(z), 4)]
                 for x, y, z in zip(
                     rvw[::step, 0, 0], rvw[::step, 0, 1], rvw[::step, 0, 2], strict=True)
+            ],
+            "w": [
+                [round(float(wx), 3), round(float(wy), 3), round(float(wz), 3)]
+                for wx, wy, wz in zip(
+                    rvw[::step, 2, 0], rvw[::step, 2, 1], rvw[::step, 2, 2], strict=True)
             ],
         }
 
@@ -115,7 +125,7 @@ def _pack(system: pt.System) -> ShotResult:
         potted=potted,
         duration=round(duration, 3),
         final_positions=final_positions,
-        cue_potted=config.CUE_BALL_ID in potted,
+        cue_potted=cue_ball_id in potted,
     )
 
 

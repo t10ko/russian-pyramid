@@ -28,4 +28,5 @@ export const api = {
   setDrill: (name) => req('POST', '/api/drill', { name }),
   setPhysics: (preset) => req('POST', '/api/physics', { preset }),
   respawnCue: () => req('POST', '/api/respawn-cue', {}),
+  setCueBall: (id) => req('POST', '/api/cue-ball', { id }),
 };

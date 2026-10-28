@@ -5,13 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Russian Pyramid — Test Ground</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='22' r='11' fill='%23f2c94c'/%3E%3Ccircle cx='21' cy='42' r='11' fill='%23f5efe0'/%3E%3Ccircle cx='43' cy='42' r='11' fill='%23f5efe0'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/app.css?v=9">
   <script type="importmap">
     {
       "imports": {
         "three": "/vendor/three.module.js",
         "three/addons/": "/vendor/unmapped/",
-        "three/addons/controls/": "/vendor/"
+        "three/addons/controls/": "/vendor/",
+        "/js/aim.js": "/js/aim.js?v=9",
+        "/js/api.js": "/js/api.js?v=9",
+        "/js/geometry.js": "/js/geometry.js?v=9",
+        "/js/interact.js": "/js/interact.js?v=9",
+        "/js/main.js": "/js/main.js?v=9",
+        "/js/playback.js": "/js/playback.js?v=9",
+        "/js/render.js": "/js/render.js?v=9",
+        "/js/render3d.js": "/js/render3d.js?v=9",
+        "/js/ui.js": "/js/ui.js?v=9"
       }
     }
   </script>
@@ -39,6 +48,8 @@
         <button data-mode="aim" class="on">Aim</button>
         <button data-mode="place">Place balls</button>
       </div>
+      <button id="btn-rack" class="btn" title="Start from scratch with all 15 white balls racked (N)">▲ New rack (15)</button>
+      <button id="btn-focus-cue" class="btn" title="Move camera to the cue ball (C)">◎ Cue ball</button>
       <button id="btn-repeat" class="btn accent" title="R" disabled>↺ Repeat</button>
       <button id="btn-undo" class="btn" title="U" disabled>Undo</button>
       <button id="btn-help" class="btn" title="?">Help</button>
@@ -58,18 +69,18 @@
       <section class="panel" id="shot-panel">
         <h2>Shot</h2>
         <div class="spin-row">
-          <canvas id="spin-pad" width="128" height="128" title="Spin (english / draw / follow)"></canvas>
+          <canvas id="spin-pad" width="128" height="128" title="Spin (english / draw / follow) — double-click to center"></canvas>
           <div class="spin-presets">
-            <button data-b="0.5" data-a="0">Follow</button>
-            <button data-b="0" data-a="0">Stun</button>
-            <button data-b="-0.5" data-a="0">Draw</button>
-            <button data-b="0" data-a="0.5">Right</button>
-            <button data-b="0" data-a="-0.5">Left</button>
+            <button data-b="0" data-a="0">Center</button>
+            <button data-b="0.4" data-a="0">Follow</button>
+            <button data-b="-0.4" data-a="0">Draw</button>
+            <button data-b="0" data-a="-0.4">Left</button>
+            <button data-b="0" data-a="0.4">Right</button>
           </div>
         </div>
         <label class="slider">
-          <span>Cue speed <b id="v0-read"></b></span>
-          <input id="power" type="range" min="0.2" max="10" step="0.05">
+          <span>Power <b id="v0-read"></b></span>
+          <input id="power" type="range" min="1" max="100" step="1">
         </label>
         <label class="slider">
           <span>Cue elevation <b id="theta-read"></b></span>
@@ -77,9 +88,6 @@
         </label>
         <div class="aim-read">φ <b id="phi-read"></b></div>
         <button id="btn-shoot" class="btn accent big">Shoot&nbsp;&nbsp;<kbd>space</kbd></button>
-        <label class="check">
-          <input id="assist" type="checkbox"> Aim assist <small>(full runout)</small>
-        </label>
         <label class="check">
           <input id="trails" type="checkbox" checked> Ball trails
         </label>
@@ -112,8 +120,10 @@
   <dialog id="help">
     <h2>Controls</h2>
     <table class="keys">
-      <tr><td>drag</td><td>orbit the camera around the followed ball · wheel zooms</td></tr>
-      <tr><td>click a ball</td><td>make the camera follow that ball (yellow cue ball by default)</td></tr>
+      <tr><td>drag</td><td>orbit the camera · wheel zooms</td></tr>
+      <tr><td>click a ball</td><td>select that ball as the cue ball and focus camera on it</td></tr>
+      <tr><td><kbd>C</kbd></td><td>move camera back behind the active cue ball</td></tr>
+      <tr><td><kbd>N</kbd></td><td>new game — rack all 15 white balls</td></tr>
       <tr><td><kbd>Shift</kbd>+drag</td><td>aim the cue from the cue ball</td></tr>
       <tr><td><kbd>Shift</kbd>+wheel</td><td>cue speed</td></tr>
       <tr><td><kbd>space</kbd></td><td>shoot</td></tr>
@@ -122,7 +132,6 @@
       <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>fine aim (Shift = coarse)</td></tr>
       <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>cue speed</td></tr>
       <tr><td><kbd>M</kbd></td><td>toggle Aim ⇄ Place-balls mode</td></tr>
-      <tr><td><kbd>A</kbd></td><td>aim assist (full runout)</td></tr>
       <tr><td>drag ball <small>(place mode)</small></td><td>move it · click cloth adds a ball · right-click removes</td></tr>
       <tr><td>double-click ball <small>(aim mode)</small></td><td>aim straight at it</td></tr>
     </table>
@@ -133,7 +142,7 @@
     <button id="help-close" class="btn">Close</button>
   </dialog>
 
-  <script type="module" src="/js/main.js"></script>
+  <script type="module" src="/js/main.js?v=9"></script>
   <script>
     // Runtime probe for headless debugging: append ?debug=1 to the URL and a
     // green #debug-out line reports renderer/canvas/rAF status after load.

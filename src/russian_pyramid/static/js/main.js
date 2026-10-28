@@ -8,7 +8,7 @@ import { api } from './api.js';
 import { View } from './geometry.js';
 import { Renderer } from './render.js';
 import { Renderer3D } from './render3d.js';
-import { Aim, SpinPad } from './aim.js';
+import { Aim, SpinPad, MAX_SPIN_R, V0_MIN, V0_MAX, v0ToPercent, percentToV0, formatShotPower } from './aim.js';
 import { Playback } from './playback.js';
 import { Interact } from './interact.js';
 import { $, hideBanner, renderAttempts, setHint, showBanner, toast, updateStats } from './ui.js';
@@ -19,17 +19,16 @@ class App {
     this.view = null;
     this.playback = new Playback();
     this.mode = 'aim';
-    this.assistPaths = null;
     this.ripples = [];
     this.pocketFlashes = [];
     this.dragPreview = null;
     this.attemptShots = new Map();   // n -> shot payload (client-side replay cache)
     this._firedEvents = 0;
-    this._predictTimer = null;
     this._aimSyncTimer = null;
     this.busy = false;
     this.shiftHeld = false;
     this.focusBallId = 'cue';
+    this.cueBallId = 'cue';
     this._framed = false;
 
     // headless-test path only; browsers are always 3D
@@ -54,6 +53,10 @@ class App {
   applyState(next) {
     if (this.state?.table && !next.table) next.table = this.state.table;
     this.state = next;
+    if (next.cue_ball_id) {
+      this.cueBallId = next.cue_ball_id;
+      this.focusBallId = next.cue_ball_id;
+    }
   }
 
   pocketById() {
@@ -64,7 +67,11 @@ class App {
 
   staticBalls() {
     const balls = this.state.balls.map((b) => ({
-      id: b.id, xy: b.xy, z: this.ballRadius, isCue: b.is_cue, radius: this.ballRadius,
+      id: b.id,
+      xy: b.xy,
+      z: this.ballRadius,
+      isCue: b.id === this.cueBallId,
+      radius: this.ballRadius,
     }));
     if (this.dragPreview) {
       const b = balls.find((x) => x.id === this.dragPreview.id);
@@ -73,8 +80,8 @@ class App {
     return balls;
   }
 
-  hasCue() { return this.state.cue_on_table; }
-  cueXY() { return this.state.balls.find((b) => b.is_cue)?.xy || [0, 0]; }
+  hasCue() { return this.state.balls.some((b) => b.id === this.cueBallId); }
+  cueXY() { return this.state.balls.find((b) => b.id === this.cueBallId)?.xy || [0, 0]; }
   nearCue(xy) {
     const c = this.cueXY();
     return Math.hypot(c[0] - xy[0], c[1] - xy[1]) < this.ballRadius * 2.2;
@@ -110,9 +117,24 @@ class App {
     this.updateControls();
     setHint('Shift+drag aims · drag orbits · click a ball to follow it · space to shoot');
 
-    if (typeof location !== 'undefined' &&
-        new URLSearchParams(location.search).has('autoshot')) {
-      setTimeout(() => this.shoot(), 1500);   // debug hook for screenshots
+    if (typeof location !== 'undefined') {
+      const params = new URLSearchParams(location.search);
+      if (params.has('drill')) {
+        api.setDrill(params.get('drill')).then((next) => {
+          this.applyState(next);
+          this.refreshUI();
+          if (params.has('follow')) this.setFocusBall(params.get('follow'));
+          if (params.has('cam')) this.setCameraPreset(params.get('cam'));
+          if (params.has('help')) this.showHelp();
+        }).catch(() => {});
+      } else {
+        if (params.has('follow')) setTimeout(() => this.setFocusBall(params.get('follow')), 100);
+        if (params.has('cam')) setTimeout(() => this.setCameraPreset(params.get('cam')), 100);
+        if (params.has('help')) setTimeout(() => this.showHelp(), 100);
+      }
+      if (params.has('autoshot')) {
+        setTimeout(() => this.shoot(), 1500);   // debug hook for screenshots
+      }
     }
     this.initDone = true;
     this.frame();   // paint immediately; frame() re-registers via rAF
@@ -150,16 +172,16 @@ class App {
     });
 
     $('btn-shoot').addEventListener('click', () => this.shoot());
+    $('btn-rack').addEventListener('click', () => this.startFullRack());
+    $('btn-focus-cue').addEventListener('click', () => this.focusCueBall());
     $('btn-repeat').addEventListener('click', () => this.repeatSituation());
     $('btn-undo').addEventListener('click', () => this.repeatSituation());
     $('btn-help').addEventListener('click', () => this.showHelp());
     $('help-close').addEventListener('click', () => $('help').close());
     $('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').close(); });
 
-    $('power').addEventListener('input', (e) => this.setAim({ V0: +e.target.value }));
+    $('power').addEventListener('input', (e) => this.setAim({ V0: percentToV0(+e.target.value) }));
     $('theta').addEventListener('input', (e) => this.setAim({ theta: +e.target.value }));
-
-    $('assist').addEventListener('change', (e) => this.setAssist(e.target.checked));
 
     $('pl-play').addEventListener('click', () => {
       if (this.playback.playing) this.playback.pause();
@@ -184,7 +206,6 @@ class App {
     document.querySelectorAll('.spin-presets button').forEach((btn) => {
       btn.addEventListener('click', () => {
         this.setAim({ a: +btn.dataset.a, b: +btn.dataset.b });
-        this.spinPad.set(+btn.dataset.a, +btn.dataset.b);
       });
     });
   }
@@ -198,11 +219,15 @@ class App {
   }
 
   refreshUI() {
-    $('power').value = this.aim.V0;
+    $('power').value = v0ToPercent(this.aim.V0);
     $('theta').value = this.aim.theta;
-    $('v0-read').textContent = `${this.aim.V0.toFixed(2)} m/s`;
+    $('v0-read').textContent = formatShotPower(this.aim.V0);
     $('theta-read').textContent = `${this.aim.theta}°`;
     $('phi-read').textContent = `${this.aim.phi.toFixed(2)}°`;
+    document.querySelectorAll('.spin-presets button').forEach((btn) => {
+      const match = Math.hypot(this.aim.a - +btn.dataset.a, this.aim.b - +btn.dataset.b) < 0.02;
+      btn.classList.toggle('on', match);
+    });
     updateStats(this.state);
     renderAttempts(this.state, (n) => this.replayAttempt(n));
     $('btn-repeat').disabled = $('btn-undo').disabled = !this.state.can_undo;
@@ -217,36 +242,30 @@ class App {
 
   setAim(patch) {
     Object.assign(this.aim, patch);
+    const r = Math.hypot(this.aim.a, this.aim.b);
+    if (r > MAX_SPIN_R) {
+      this.aim.a = (this.aim.a / r) * MAX_SPIN_R;
+      this.aim.b = (this.aim.b / r) * MAX_SPIN_R;
+    }
     if (patch.a !== undefined || patch.b !== undefined) {
       this.spinPad.set(this.aim.a, this.aim.b);
     }
     this.refreshUI();
     clearTimeout(this._aimSyncTimer);
     this._aimSyncTimer = setTimeout(() => api.aim(this.aim.params()).catch(() => {}), 250);
-    this.schedulePredict();
   }
 
   nudgeAim(d) { this.setAim({ phi: (this.aim.phi + d + 360) % 360 }); }
   nudgePower(d) {
-    this.setAim({ V0: Math.min(10, Math.max(0.2, +(this.aim.V0 + d).toFixed(2))) });
+    this.setAim({ V0: Math.min(V0_MAX, Math.max(V0_MIN, +(this.aim.V0 + d).toFixed(3))) });
   }
 
   aimAtBall(ball, exact = false) {
     const cue = this.cueXY();
     const phi = Math.atan2(ball.xy[1] - cue[1], ball.xy[0] - cue[0]) * 180 / Math.PI;
     this.setAim({ phi: (phi + 360) % 360 });
+    this.focusCueBall({ alignAim: true });
     if (exact) toast('aimed at ball ' + ball.id);
-  }
-
-  schedulePredict() {
-    if (!$('assist').checked || !this.hasCue() || this.playback.frames) return;
-    clearTimeout(this._predictTimer);
-    this._predictTimer = setTimeout(async () => {
-      try {
-        const res = await api.predict(this.aim.params());
-        this.assistPaths = res.paths;
-      } catch { /* transient */ }
-    }, 160);
   }
 
   // ---------- shooting ----------
@@ -265,7 +284,7 @@ class App {
     this.busy = true;
     hideBanner();
     try {
-      const payload = await api.shoot(this.aim.params());
+      const payload = await api.shoot({ ...this.aim.params(), cue_ball_id: this.cueBallId });
       this.applyShot(payload);
     } catch (err) {
       toast(err.message, 'error', 4000);
@@ -280,7 +299,6 @@ class App {
     if (this.attemptShots.size > 40) {
       this.attemptShots.delete(this.attemptShots.keys().next().value);
     }
-    this.assistPaths = null;
     this.ripples = [];
     this.pocketFlashes = [];
     this._firedEvents = 0;
@@ -294,7 +312,7 @@ class App {
     this.syncPlayButton();
     const buttons = [
       { label: '↺ Repeat (R)', accent: true, onClick: () => this.repeatSituation() },
-      { label: 'Keep position', onClick: () => hideBanner() },
+      { label: '◎ Go to cue (C)', onClick: () => { hideBanner(); this.focusCueBall(); } },
     ];
     if (cue_potted) {
       buttons.push({
@@ -303,21 +321,21 @@ class App {
           this.applyState(await api.respawnCue());
           this.playback.clear();
           this.afterSituationChange('cue ball respawned');
+          this.focusCueBall();
         },
       });
-      showBanner('bad', 'Scratch — cue ball potted',
-        `${potted.length ? `potted ${potted.join(', ')} before dropping in` : 'the cue ball went in'}`,
+      showBanner('bad', 'Scratch',
+        `${potted.length ? `potted ${potted.join(', ')} before scratch` : 'cue ball potted'}`,
         buttons);
     } else if (potted.length) {
       showBanner('good', `Potted ${potted.join(', ')}`,
-        `attempt #${attempt.n} · ${attempt.cushion_hits} cushion hits · ${attempt.duration.toFixed(1)} s`,
+        `#${attempt.n} · ${attempt.cushion_hits} cushions · ${attempt.duration.toFixed(1)} s`,
         buttons);
     } else {
       showBanner('bad', 'Missed',
-        `attempt #${attempt.n} · ${attempt.cushion_hits} cushion hits — same ball, same angle, again`,
+        `#${attempt.n} · ${attempt.cushion_hits} cushions`,
         buttons);
     }
-    if ($('assist').checked) this.schedulePredict();
   }
 
   lastShotInfo() {
@@ -329,6 +347,16 @@ class App {
   }
 
   // ---------- situation management ----------
+
+  async startFullRack() {
+    try {
+      this.applyState(await api.setDrill('rack'));
+      this.afterSituationChange('new game — 15 white balls racked');
+      this.focusCueBall({ alignAim: true });
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
 
   async repeatSituation() {
     if (!this.state.can_undo) { toast('nothing to repeat yet'); return; }
@@ -342,13 +370,11 @@ class App {
 
   afterSituationChange(msg) {
     this.playback.clear();
-    this.assistPaths = null;
     hideBanner();
     Object.assign(this.aim, this.state.aim);
     this.spinPad.set(this.aim.a, this.aim.b);
     this.refreshUI();
     if (msg) toast(msg);
-    if ($('assist').checked) this.schedulePredict();
   }
 
   replayLast() { this.replayAttempt(Math.max(...this.attemptShots.keys(), 0)); }
@@ -402,13 +428,43 @@ class App {
     }
   }
 
-  // ---------- camera focus ----------
+  // ---------- camera focus & cue-ball selection ----------
 
-  setFocusBall(id) {
-    if (this.focusBallId === id) return;
+  setFocusBall(id, { alignAim = false } = {}) {
+    if (!this.playback.playing) {
+      this.playback.clear();
+      hideBanner();
+    }
     this.focusBallId = id;
-    this._framed = false;   // re-frame the TV camera on the new ball
-    toast(id === 'cue' ? 'camera follows the cue ball' : `camera follows ball ${id}`);
+    this.cueBallId = id;
+    if (this.state?.balls) {
+      this.state.cue_ball_id = id;
+      for (const b of this.state.balls) b.is_cue = (b.id === id);
+      this.state.cue_on_table = this.state.balls.some((b) => b.id === id);
+    }
+    api.setCueBall(id).catch(() => {});
+    const ball = this.staticBalls().find((b) => b.id === id);
+    if (ball && this.r3d) {
+      this.r3d.focusOn(ball.xy[0], ball.xy[1], this.ballRadius, {
+        smooth: true,
+        phi: alignAim ? this.aim.phi : null,
+      });
+    }
+    toast(id === 'cue' ? 'shooting with yellow ball' : `shooting with ball ${id}`);
+  }
+
+  focusCueBall({ alignAim = false } = {}) {
+    let targetId = this.cueBallId;
+    if (!this.state.balls.some((b) => b.id === targetId)) {
+      const fallback = this.state.balls.find((b) => b.id === 'cue') || this.state.balls[0];
+      if (!fallback) {
+        toast('no balls on table — respawn cue or rack', 'error');
+        return;
+      }
+      targetId = fallback.id;
+    }
+    hideBanner();
+    this.setFocusBall(targetId, { alignAim });
   }
 
   // Resolve which ball the camera should orbit: the chosen one, else the
@@ -457,18 +513,10 @@ class App {
     this.updateControls();
     setHint(mode === 'place'
       ? 'drag balls to move · click cloth to add · right-click to remove · M to aim'
-      : 'Shift+drag aims · drag orbits · click a ball to follow it · space to shoot');
+      : 'Shift+drag aims · drag orbits · click any ball to shoot with it · space to shoot');
   }
 
   toggleMode() { this.setMode(this.mode === 'aim' ? 'place' : 'aim'); }
-
-  setAssist(on) {
-    $('assist').checked = on;
-    if (on) this.schedulePredict();
-    else this.assistPaths = null;
-  }
-
-  toggleAssist() { this.setAssist(!$('assist').checked); }
   showHelp() { $('help').showModal(); }
 
   // ---------- render loop ----------
@@ -519,7 +567,6 @@ class App {
             ...this.aim.params(),
             showSpin: true }
         : null,
-      assist: (!playing && this.assistPaths) ? this.assistPaths : null,
       trails: this.playback.trailPts,
       trailsOn: $('trails').checked && !!this.playback.frames,
       ripples: this.ripples,
@@ -537,6 +584,7 @@ class App {
       if (this.viewMode === '3d' && this.r3d) {
         // frame the TV camera on the followed ball once we know where it is
         if (!this._framed && scene.focus) {
+          this.r3d.follow(scene.focus.xy[0], scene.focus.xy[1], scene.focus.z);
           this.setCameraPreset(this.cameraPreset || 'tv');
           this._framed = true;
         }

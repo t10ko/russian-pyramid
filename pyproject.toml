@@ -41,8 +41,8 @@ dev = [
 russian-pyramid = "russian_pyramid.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/tigranatayan/russian-pyramid"
-Issues = "https://github.com/tigranatayan/russian-pyramid/issues"
+Homepage = "https://github.com/t10ko/russian-pyramid"
+Issues = "https://github.com/t10ko/russian-pyramid/issues"
 
 [tool.hatch.version]
 path = "src/russian_pyramid/_version.py"

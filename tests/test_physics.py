@@ -58,7 +58,9 @@ def test_frames_are_packed(warm):
     assert set(result.frames) == {"cue", "1"}
     for frames in result.frames.values():
         assert len(frames["t"]) == len(frames["xyz"])
+        assert len(frames["t"]) == len(frames["w"])
         assert all(len(p) == 3 for p in frames["xyz"])  # x, y, z
+        assert all(len(w) == 3 for w in frames["w"])    # wx, wy, wz
         assert frames["t"][0] == pytest.approx(0.0)
         assert frames["t"][-1] > 0.5
 
