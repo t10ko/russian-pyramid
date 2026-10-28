@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "russian-pyramid"
+dynamic = ["version"]
+description = "A repetition-focused Russian Pyramid (billiards pyramid) practice table with pooltool physics"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Tigran Atayan" }]
+requires-python = ">=3.10,<3.14"
+keywords = ["billiards", "pool", "pyramid", "russian-pyramid", "pooltool", "physics", "practice"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment :: Simulation",
+]
+dependencies = [
+    "pooltool-billiards>=0.6,<0.7",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pyinstaller>=6",
+    "pillow>=10",
+]
+
+[project.scripts]
+russian-pyramid = "russian_pyramid.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/tigranatayan/russian-pyramid"
+Issues = "https://github.com/tigranatayan/russian-pyramid/issues"
+
+[tool.hatch.version]
+path = "src/russian_pyramid/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/russian_pyramid"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "examples", "packaging", "scripts", "README.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

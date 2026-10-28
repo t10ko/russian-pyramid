@@ -1,0 +1,51 @@
+name: Build macOS app
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14   # arm64
+            suffix: arm64
+          - runner: macos-13   # x86_64
+            suffix: intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build .app with PyInstaller
+        run: packaging/build_macos.sh
+
+      - name: Smoke test the bundled CLI
+        run: |
+          ./packaging/dist/russian-pyramid/russian-pyramid --version
+          ./packaging/dist/russian-pyramid/russian-pyramid --no-browser --port 8123 &
+          sleep 25
+          curl -sf http://127.0.0.1:8123/api/state > /dev/null && echo "server OK"
+          curl -sf -X POST http://127.0.0.1:8123/api/shoot -H 'Content-Type: application/json' -d '{"params":{"V0":2.0,"phi":90.0}}' | head -c 200
+          kill %1
+
+      - name: Package DMG
+        run: |
+          cd packaging/dist
+          hdiutil create -volname "Russian Pyramid" \
+            -srcfolder "Russian Pyramid.app" \
+            -ov -format UDZO "russian-pyramid-${{ matrix.suffix }}.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: russian-pyramid-${{ matrix.suffix }}.dmg
+          path: packaging/dist/*.dmg

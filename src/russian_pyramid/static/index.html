@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Russian Pyramid — Practice Table</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='22' r='11' fill='%23f2c94c'/%3E%3Ccircle cx='21' cy='42' r='11' fill='%23f5efe0'/%3E%3Ccircle cx='43' cy='42' r='11' fill='%23f5efe0'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+        <circle cx="32" cy="20" r="11" fill="#f2c94c"/>
+        <circle cx="21" cy="42" r="11" fill="#f5efe0"/>
+        <circle cx="43" cy="42" r="11" fill="#f5efe0"/>
+      </svg>
+      <div>
+        <h1>Russian Pyramid</h1>
+        <p class="tagline">practice table · pooltool physics</p>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <label class="field">
+        <span>Drill</span>
+        <select id="drill-select"></select>
+      </label>
+      <label class="field">
+        <span>Cushions</span>
+        <select id="physics-select"></select>
+      </label>
+      <div class="seg" id="mode-toggle" title="M">
+        <button data-mode="aim" class="on">Aim</button>
+        <button data-mode="place">Place balls</button>
+      </div>
+      <button id="btn-repeat" class="btn accent" title="R" disabled>↺ Repeat</button>
+      <button id="btn-undo" class="btn" title="U" disabled>Undo</button>
+      <button id="btn-help" class="btn" title="?">Help</button>
+    </div>
+
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <main>
+    <div id="table-wrap">
+      <canvas id="table"></canvas>
+      <div id="banner" class="hidden"></div>
+      <div id="hint" class="hint"></div>
+    </div>
+
+    <aside id="sidebar">
+      <section class="panel" id="shot-panel">
+        <h2>Shot</h2>
+        <div class="spin-row">
+          <canvas id="spin-pad" width="128" height="128" title="Spin (english / draw / follow)"></canvas>
+          <div class="spin-presets">
+            <button data-b="0.5" data-a="0">Follow</button>
+            <button data-b="0" data-a="0">Stun</button>
+            <button data-b="-0.5" data-a="0">Draw</button>
+            <button data-b="0" data-a="0.5">Right</button>
+            <button data-b="0" data-a="-0.5">Left</button>
+          </div>
+        </div>
+        <label class="slider">
+          <span>Cue speed <b id="v0-read"></b></span>
+          <input id="power" type="range" min="0.2" max="10" step="0.05">
+        </label>
+        <label class="slider">
+          <span>Cue elevation <b id="theta-read"></b></span>
+          <input id="theta" type="range" min="0" max="70" step="1">
+        </label>
+        <div class="aim-read">φ <b id="phi-read"></b></div>
+        <button id="btn-shoot" class="btn accent big">Shoot&nbsp;&nbsp;<kbd>space</kbd></button>
+        <label class="check">
+          <input id="assist" type="checkbox"> Aim assist <small>(full runout)</small>
+        </label>
+        <label class="check">
+          <input id="trails" type="checkbox" checked> Ball trails
+        </label>
+        <label class="check">
+          <input id="ghost" type="checkbox" checked> Ghost-ball preview
+        </label>
+      </section>
+
+      <section class="panel" id="playback-panel">
+        <h2>Playback</h2>
+        <div class="row">
+          <button id="pl-play" class="btn" title="P">▶</button>
+          <select id="pl-speed">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+          </select>
+          <span id="pl-time" class="mono"></span>
+        </div>
+        <input id="pl-scrub" type="range" min="0" max="1" step="0.001" value="0" disabled>
+      </section>
+
+      <section class="panel" id="attempts-panel">
+        <h2>Attempts</h2>
+        <ul id="attempts"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toasts"></div>
+
+  <dialog id="help">
+    <h2>Controls</h2>
+    <table class="keys">
+      <tr><td><kbd>space</kbd></td><td>shoot</td></tr>
+      <tr><td><kbd>R</kbd></td><td>repeat the same situation</td></tr>
+      <tr><td><kbd>U</kbd></td><td>undo shot (= repeat)</td></tr>
+      <tr><td><kbd>P</kbd></td><td>replay last shot</td></tr>
+      <tr><td>drag table</td><td>aim from the cue ball</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>fine aim (Shift = coarse)</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd> / wheel</td><td>cue speed</td></tr>
+      <tr><td><kbd>M</kbd></td><td>toggle Aim / Place-balls mode</td></tr>
+      <tr><td><kbd>A</kbd></td><td>aim assist</td></tr>
+      <tr><td>drag ball <small>(place mode)</small></td><td>move · click empty cloth adds a ball · right-click removes</td></tr>
+      <tr><td>double-click ball <small>(aim mode)</small></td><td>aim straight at that ball</td></tr>
+    </table>
+    <p class="fine">
+      12-ft table · 74 mm corner mouths, straight jaws · 82 mm sides · 68 mm / 285 g balls.
+      Corner pockets accept roughly ±0.1° of aim error — that is the point.
+    </p>
+    <button id="help-close" class="btn">Close</button>
+  </dialog>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
