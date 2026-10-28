@@ -61,19 +61,9 @@ A repetition-focused **Russian Pyramid** (Pyramid / Русский бильяр�
 
 ## Quickstart
 
-### Quickest way — Make
-
-If you have cloned the repository, simply run:
-
-```bash
-make
-```
-
-Running `make` automatically sets up the environment and launches the local web server at `http://127.0.0.1:8765`, opening your default browser.
-
 ```bash
 make setup    # Set up Python virtual environment and dependencies
-make          # (or make start) Launch the practice room
+make start    # Launch the practice room at http://127.0.0.1:8765
 ```
 
 ---
@@ -99,8 +89,8 @@ russian-pyramid
 ```bash
 git clone git@github.com:t10ko/russian-pyramid.git
 cd russian-pyramid
-./setup
-./start
+make setup
+make start
 ```
 
 #### macOS App Bundle
@@ -178,12 +168,12 @@ make help      # Show all available make targets
 ### Repository Structure
 
 ```
-├── Makefile                    # Developer targets (make, make setup, make test, etc.)
-├── setup                       # Automated venv creation and dependency installer
-├── start                       # Launcher script
+├── Makefile                    # Developer targets (make start, make setup, etc.)
 ├── assets/                     # Screenshots, previews, and icons
 ├── packaging/                  # PyInstaller spec and macOS app builder
-├── scripts/                    # Headless smoke test and asset generators
+├── scripts/                    # Setup script, headless smoke test, and asset tools
+│   ├── setup.sh                # Environment preparation script
+│   └── ui_smoke.mjs            # Headless UI smoke test
 ├── src/
 │   └── russian_pyramid/
 │       ├── cli.py              # CLI entry point (arg parsing, server startup)

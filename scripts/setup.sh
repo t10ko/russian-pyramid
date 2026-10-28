@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# setup - Prepare virtual environment and dependencies for Russian Pyramid
+# scripts/setup.sh - Prepare virtual environment and dependencies for Russian Pyramid
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 echo "=== Russian Pyramid: Setup ==="
@@ -60,5 +60,4 @@ fi
 
 echo
 echo "Setup complete! You can now start the practice room with:"
-echo "  make"
-echo "  or: ./start"
+echo "  make start"
