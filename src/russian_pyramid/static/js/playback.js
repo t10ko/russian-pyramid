@@ -29,6 +29,7 @@ export class Playback {
     this.onEnd = null;
     this._firedIdx = 0;
     this.trailPts = {};
+    this.shotCue = null;     // {xy, params, cueBallId} for cue rendering during replay
     this.lastWallTime = 0;
   }
 
@@ -36,6 +37,12 @@ export class Playback {
     this.events = shot.events || [];
     this.pottedEvents = this.events.filter((e) => e.type === 'pocket');
     this.frames = this._cleanFrames(shot.frames, this.pottedEvents);
+    const cueId = shot.state?.cue_ball_id || 'cue';
+    const startXYZ = this.frames?.[cueId]?.xyz?.[0] || this.frames?.cue?.xyz?.[0] || null;
+    const cueParams = shot.attempt?.params || shot.state?.aim || null;
+    this.shotCue = (startXYZ && cueParams)
+      ? { xy: [startXYZ[0], startXYZ[1]], params: cueParams, cueBallId: cueId }
+      : null;
     const lastPotEnd = this.pottedEvents.reduce(
       (m, e) => Math.max(m, e.t + ROLL_MAX + SINK_TIME),
       0,
@@ -83,6 +90,7 @@ export class Playback {
     this.quats = {};
     this.playing = false;
     this.trailPts = {};
+    this.shotCue = null;
   }
 
   _buildQuatFrames(frames, pottedEvents) {
