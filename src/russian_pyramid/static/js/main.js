@@ -33,6 +33,7 @@ class App {
     this._predictTimer = null;
     this._aimSyncTimer = null;
     this.busy = false;
+    this.shiftHeld = false;
 
     this.viewMode = globalThis.__RP_FORCE_2D__ ? '2d' : store.get('rp.view', '3d');
     // ?view=2d|3d URL override (handy for debugging/screenshots)
@@ -111,6 +112,10 @@ class App {
     new Interact($('table-wrap'), this);
     this.wireUI();
     this.syncToggles();
+
+    window.addEventListener('keydown', (e) => { if (e.key === 'Shift') this.setShift(true); });
+    window.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.setShift(false); });
+    window.addEventListener('blur', () => this.setShift(false));
 
     if (this.viewMode === '3d') this.ensure3d();
 
@@ -260,6 +265,8 @@ class App {
     this._applyCanvasVisibility();
     this.onResize();
     this.syncToggles();
+    this.updateControls();
+    if (this.mode === 'aim') this.setMode('aim');   // refresh hint for the view
   }
 
   setOrientation(orientation) {
@@ -452,6 +459,7 @@ class App {
 
   onDragPreview(preview) {
     this.dragPreview = preview ? { id: preview.id, xy: preview.xy } : null;
+    this.updateControls();
   }
 
   async moveBall(id, xy) {
@@ -484,15 +492,40 @@ class App {
 
   // ---------- modes ----------
 
+  setShift(on) {
+    if (this.shiftHeld === on) return;
+    this.shiftHeld = on;
+    this.updateControls();
+  }
+
+  // Camera is free unless Shift is held (aim mode) or a ball is being
+  // dragged (place mode).
+  updateControls() {
+    const wrap = $('table-wrap');
+    if (this.viewMode !== '3d') {
+      this.r3d?.setInteractive(false);
+      wrap.style.cursor = this.mode === 'place' ? 'move' : 'crosshair';
+      return;
+    }
+    const cameraFree = this.mode === 'place' ? !this.dragPreview : !this.shiftHeld;
+    this.r3d?.setInteractive(cameraFree);
+    wrap.style.cursor = this.mode === 'place'
+      ? 'move'
+      : (this.shiftHeld ? 'crosshair' : 'grab');
+  }
+
   setMode(mode) {
     this.mode = mode;
     for (const btn of $('mode-toggle').querySelectorAll('button')) {
       btn.classList.toggle('on', btn.dataset.mode === mode);
     }
-    $('table-wrap').style.cursor = mode === 'place' ? 'move' : 'crosshair';
+    this.updateControls();
+    const aimHint = this.viewMode === '3d'
+      ? 'Shift+drag aims · drag orbits · space to shoot · R repeats'
+      : 'drag to aim · space to shoot · R repeats the same situation';
     setHint(mode === 'place'
       ? 'drag balls to move · click cloth to add · right-click to remove · M to aim'
-      : 'drag to aim · space to shoot · R repeats the same situation');
+      : aimHint);
   }
 
   toggleMode() { this.setMode(this.mode === 'aim' ? 'place' : 'aim'); }

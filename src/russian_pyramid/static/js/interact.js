@@ -65,8 +65,10 @@ export class Interact {
       return;
     }
 
-    // aim mode: pressing anywhere starts steering the aim from the cue ball
-    if (this.app.hasCue()) {
+    // aim mode: in 3D the plain drag belongs to the camera -- the cue
+    // moves when Shift is held (2D always aims; it has no camera)
+    const canAim = this.app.viewMode === '2d' || e.shiftKey;
+    if (this.app.hasCue() && canAim) {
       this.dragAim = true;
       this.wrapper.setPointerCapture(e.pointerId);
       if (ball && ball.id !== 'cue' && !this.app.nearCue(xy)) {
@@ -141,6 +143,8 @@ export class Interact {
   wheel(e) {
     if (!this.onCanvas(e)) return;
     if (this.app.mode !== 'aim' || !this.app.hasCue()) return;
+    // in 3D the wheel zooms the camera; Shift+wheel sets power (2D: always)
+    if (this.app.viewMode === '3d' && !e.shiftKey) return;
     e.preventDefault();
     const step = e.shiftKey ? 0.5 : 0.1;
     this.app.nudgePower(e.deltaY < 0 ? step : -step);

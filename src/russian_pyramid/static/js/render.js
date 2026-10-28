@@ -129,6 +129,38 @@ export class Renderer {
     }
     g.restore();
 
+    // --- cloth markings: head string, spots, rack triangle ---
+    g.save();
+    g.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    g.fillStyle = 'rgba(255, 255, 255, 0.22)';
+    g.lineWidth = Math.max(1.2, view.m(0.0035));
+
+    const yHead = t.l / 4, yFoot = (3 * t.l) / 4, cxm = t.w / 2;
+    g.beginPath();
+    g.moveTo(view.cx(0.06, yHead), view.cy(0.06, yHead));
+    g.lineTo(view.cx(t.w - 0.06, yHead), view.cy(t.w - 0.06, yHead));
+    g.stroke();
+    for (const sy of [yHead, t.l / 2, yFoot]) {
+      g.beginPath();
+      g.arc(view.cx(cxm, sy), view.cy(cxm, sy), view.m(0.009), 0, TAU);
+      g.fill();
+    }
+
+    // rack triangle: apex on the foot spot, opening toward the foot rail
+    const gap = 0.0686;                       // rack row spacing
+    const th = 4 * gap * Math.sin(Math.PI / 3);
+    const half = 2 * gap;
+    g.setLineDash([view.m(0.026), view.m(0.024)]);
+    g.strokeStyle = 'rgba(255, 255, 255, 0.20)';
+    g.beginPath();
+    g.moveTo(view.cx(cxm, yFoot), view.cy(cxm, yFoot));
+    g.lineTo(view.cx(cxm - half, yFoot + th), view.cy(cxm - half, yFoot + th));
+    g.lineTo(view.cx(cxm + half, yFoot + th), view.cy(cxm + half, yFoot + th));
+    g.closePath();
+    g.stroke();
+    g.setLineDash([]);
+    g.restore();
+
     // --- physics cushion noses: the exact lines the solver collides with ---
     g.strokeStyle = 'rgba(255, 255, 255, 0.13)';
     g.lineWidth = Math.max(1.5, view.m(0.006));

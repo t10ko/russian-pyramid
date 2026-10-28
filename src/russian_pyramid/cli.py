@@ -32,7 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT})")
-    parser.add_argument("--drill", default="free", help="drill to start on (default 'free')")
+    parser.add_argument("--drill", default="straight_corner",
+                        help="drill to start on (default 'straight_corner')")
     parser.add_argument("--physics", default=config.DEFAULT_PHYSICS_PRESET,
                         choices=sorted(config.PHYSICS_PRESETS),
                         help="cushion physics preset")
