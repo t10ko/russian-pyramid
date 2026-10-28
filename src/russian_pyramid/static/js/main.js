@@ -220,6 +220,14 @@ class App {
   async shoot() {
     if (this.busy) return;
     if (!this.hasCue()) { toast('the cue ball is in the pocket — respawn it first', 'error'); return; }
+    // still watching the previous shot? first space skips to its end
+    if (this.playback.frames &&
+        (this.playback.playing || this.playback.time < this.playback.duration - 1e-3)) {
+      this.playback.pause();
+      this.playback.seek(this.playback.duration);
+      this._firedEvents = this.playback.events.length;
+      return;
+    }
     this.busy = true;
     hideBanner();
     try {
