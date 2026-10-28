@@ -416,7 +416,7 @@ class App {
       { label: '↺ Repeat (R)', accent: true, onClick: () => this.repeatSituation() },
       { label: '◎ Go to cue (C)', onClick: () => { hideBanner(); this.focusCueBall(); } },
     ];
-    if (cue_potted) {
+    if (cue_potted || !this.hasCue()) {
       buttons.push({
         label: 'Respawn cue',
         onClick: async () => {
@@ -427,11 +427,15 @@ class App {
           this.focusCueBall();
         },
       });
+    }
+    if (cue_potted) {
+      const others = potted.filter((id) => id !== this.cueBallId);
       showBanner('bad', 'Scratch',
-        `${potted.length ? `potted ${potted.join(', ')} before scratch` : 'cue ball potted'}`,
+        `${others.length ? `potted ${others.join(', ')} before scratch` : 'cue ball potted'}`,
         buttons);
     } else if (potted.length) {
-      showBanner('good', `Potted ${potted.join(', ')}`,
+      const label = potted.map((id) => (id === 'cue' ? 'cue (svoyak)' : id)).join(', ');
+      showBanner('good', `Potted ${label}`,
         `#${attempt.n} · ${attempt.cushion_hits} cushions · ${attempt.duration.toFixed(1)} s`,
         buttons);
     } else {

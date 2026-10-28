@@ -37,7 +37,7 @@ export function renderAttempts(state, onReplay, activeN = null) {
     li.innerHTML = `
       <span class="n">#${a.n}</span>
       <span class="dot ${cls}"></span>
-      <span>${a.cue_potted ? 'scratch' : (a.potted.length ? `potted ${a.potted.join(', ')}` : 'missed')}</span>
+      <span>${a.cue_potted ? 'scratch' : (a.potted.length ? `potted ${a.potted.map((id) => (id === 'cue' ? 'svoyak' : id)).join(', ')}` : 'missed')}</span>
       <span class="meta">${v0ToPercent(a.params.V0)}%</span>`;
     li.title = `φ ${a.params.phi.toFixed(2)}° · ${formatShotPower(a.params.V0)} · ` +
                `spin (${a.params.a.toFixed(2)}, ${a.params.b.toFixed(2)}) · ${a.duration.toFixed(1)} s`;

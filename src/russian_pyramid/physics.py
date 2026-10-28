@@ -119,13 +119,16 @@ def _pack(system: pt.System, cue_ball_id: str = config.CUE_BALL_ID) -> ShotResul
         if bid not in potted
     }
     duration = max((f["t"][-1] for f in frames.values()), default=0.0)
+    hit_object_ball = any(
+        e["type"] == "ball_ball" and cue_ball_id in e["balls"] for e in events
+    )
     return ShotResult(
         frames=frames,
         events=events,
         potted=potted,
         duration=round(duration, 3),
         final_positions=final_positions,
-        cue_potted=cue_ball_id in potted,
+        cue_potted=(cue_ball_id in potted) and not hit_object_ball,
     )
 
 
