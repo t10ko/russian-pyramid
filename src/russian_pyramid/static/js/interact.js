@@ -1,11 +1,15 @@
-// Pointer + keyboard interaction: aiming, dragging balls, shortcuts.
+// Pointer + keyboard interaction: aiming, dragging balls, free camera movement, shortcuts.
 // Attached to the table wrapper so it works for both the 2D and 3D
 // renderers; pointer handlers ignore events that didn't land on the active
 // canvas (banner, hints, etc.).
 
+import { MAX_SPIN_R } from './aim.js';
 import { angleDeg, normAngleDeg, rad2deg } from './geometry.js';
 
-const MIN_AIM_PIVOT_R = 0.22; // minimum effective lever arm (m) for smooth relative aiming
+const MOVE_CODES = {
+  KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', KeyQ: 'q', KeyE: 'e',
+};
+const MOVE_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e']);
 
 export class Interact {
   constructor(wrapper, app) {
@@ -14,6 +18,8 @@ export class Interact {
     this.dragBall = null;    // {id, offset, xy}
     this.dragAim = false;
     this.moved = false;
+    this.moveKeys = new Set();
+    this._rightDownAt = null;
 
     wrapper.addEventListener('pointerdown', (e) => this.down(e));
     wrapper.addEventListener('pointermove', (e) => this.move(e));
@@ -24,19 +30,32 @@ export class Interact {
     wrapper.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
 
     window.addEventListener('keydown', (e) => this.key(e));
+    window.addEventListener('keyup', (e) => this.keyUp(e));
+    window.addEventListener('blur', () => this.moveKeys.clear());
   }
 
   onCanvas(e) {
     return e.target === this.app.activeCanvas();
   }
 
-  // pointer event -> table coordinates (via the active renderer)
+  // pointer event -> table coordinates on the ball-center cloth plane
   tablePos(e) {
     const canvas = this.app.activeCanvas();
     const rect = canvas.getBoundingClientRect();
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
     return this.app.renderer?.tableFromClient(px, py);
+  }
+
+  // pointer event -> target point for aiming (hits 3D target-ball surface first, else cloth plane)
+  aimPos(e) {
+    const canvas = this.app.activeCanvas();
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const r = this.app.renderer;
+    if (r?.aimFromClient) return r.aimFromClient(px, py, this.app.cueBallId);
+    return r?.tableFromClient(px, py);
   }
 
   ballAt(xy) {
@@ -50,7 +69,11 @@ export class Interact {
   }
 
   down(e) {
-    if (e.button === 2 || e.altKey) return;      // handled by contextmenu
+    if (e.button === 2 || e.altKey) {
+      this._rightDownAt = { x: e.clientX, y: e.clientY };
+      return; // stationary right-click handled by contextmenu; right-drag pans camera
+    }
+    if (e.button !== 0 || e.ctrlKey || e.metaKey) return; // let OrbitControls pan on Middle / Cmd+drag
     if (!this.onCanvas(e)) return;
     const xy = this.tablePos(e);
     if (!xy) return;
@@ -66,15 +89,16 @@ export class Interact {
       return;
     }
 
-    // aim mode: the plain drag belongs to the camera -- the cue moves when
-    // Shift is held (the headless 2D path always aims; it has no camera).
-    // Start relative to the current aim angle without jumping on pointerdown.
+    // aim mode: plain drag belongs to the camera -- the cue aims immediately at
+    // the clicked/dragged target when Shift is held (headless 2D always aims).
     const canAim = this.app.mode === 'aim' && !this.app.isLiveShotRolling() &&
       (this.app.viewMode === '2d' || e.shiftKey);
     if (this.app.hasCue() && canAim) {
       this.dragAim = true;
-      this._last = xy;
       this.wrapper.setPointerCapture(e.pointerId);
+      const targetXY = this.aimPos(e) || xy;
+      const phi = this.phiToward(targetXY);
+      if (phi !== null) this.app.setAim({ phi });
     }
   }
 
@@ -89,52 +113,40 @@ export class Interact {
       this.moved = true;
       this.app.onDragPreview(this.dragBall);
     } else if (this.dragAim) {
-      const xy = this.tablePos(e);
-      if (!xy) return;
-      if (this._last) {
-        const dPhi = this.deltaPhiFromDrag(this._last, xy);
-        if (Math.abs(dPhi) > 1e-6) {
-          this.moved = true;
-          this.app.setAim({ phi: normAngleDeg(this.app.aim.phi + dPhi) });
-        }
+      const targetXY = this.aimPos(e);
+      const phi = targetXY ? this.phiToward(targetXY) : null;
+      if (phi !== null) {
+        this.moved = true;
+        this.app.setAim({ phi });
       }
-      this._last = xy;
     }
   }
 
-  // Incremental angular change (degrees) around the cue ball from `prevXY` to
-  // `nextXY`, clamped at MIN_AIM_PIVOT_R so dragging near the ball stays smooth.
-  deltaPhiFromDrag(prevXY, nextXY) {
-    const cue = this.app.cueXY();
-    const rx = prevXY[0] - cue[0];
-    const ry = prevXY[1] - cue[1];
-    const dx = nextXY[0] - prevXY[0];
-    const dy = nextXY[1] - prevXY[1];
-    const denom = Math.max(rx * rx + ry * ry, MIN_AIM_PIVOT_R * MIN_AIM_PIVOT_R);
-    return rad2deg((rx * dy - ry * dx) / denom);
-  }
-
-  // Pointer is on the cue-stick side (behind the cue ball), so the shot
-  // direction points from the pointer through the cue ball.
-  phiFromCueSide(xy) {
-    const cue = this.app.cueXY();
-    const dx = cue[0] - xy[0];
-    const dy = cue[1] - xy[1];
-    if (Math.hypot(dx, dy) < 1e-4) return null;
-    return angleDeg(dx, dy);
-  }
-
+  // Aim the cue's sightline from the cue ball directly through the target `xy`.
+  // Accounts for horizontal off-center parallel shift (`a`) so the collinear
+  // dashed aiming line lands right on `xy`.
   phiToward(xy) {
-    return this.phiFromCueSide(xy);
+    const cue = this.app.cueXY();
+    const dx = xy[0] - cue[0];
+    const dy = xy[1] - cue[1];
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-4) return null;
+    const alpha = angleDeg(dx, dy);
+    const ca = Math.max(-MAX_SPIN_R, Math.min(MAX_SPIN_R, this.app.aim?.a || 0));
+    const sideOffset = (this.app.ballRadius || 0) * ca;
+    if (Math.abs(sideOffset) > 1e-6 && dist > Math.abs(sideOffset) * 1.2) {
+      return normAngleDeg(alpha - rad2deg(Math.asin(sideOffset / dist)));
+    }
+    return alpha;
   }
 
   up(e) {
     if (this.dragBall) {
       const { id, xy } = this.dragBall;
       this.app.moveBall(id, xy);
-    } else if (!this.moved && this._downAt && !e?.shiftKey) {
+    } else if (!this.moved && this._downAt && !e?.shiftKey && !e?.ctrlKey && !e?.metaKey) {
       const dist = Math.hypot(e.clientX - this._downAt.x, e.clientY - this._downAt.y);
-      if (dist < 5) {
+      if (dist < 7) {
         const xy = this.tablePos(e);
         if (xy) {
           const ball = this.ballAt(xy);
@@ -148,7 +160,6 @@ export class Interact {
     }
     this.dragBall = null;
     this.dragAim = false;
-    this._last = null;
     this._downAt = null;
     this.app.onDragPreview(null);
   }
@@ -156,7 +167,8 @@ export class Interact {
   cancel() {
     this.dragBall = null;
     this.dragAim = false;
-    this._last = null;
+    this._downAt = null;
+    this._rightDownAt = null;
     this.app.onDragPreview(null);
   }
 
@@ -169,7 +181,10 @@ export class Interact {
   }
 
   altClick(e) {
+    const down = this._rightDownAt;
+    this._rightDownAt = null;
     if (!this.onCanvas(e) || this.app.mode !== 'place') return;
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) >= 6) return; // right-dragged to pan
     const xy = this.tablePos(e);
     if (!xy) return;
     const ball = this.ballAt(xy);
@@ -189,8 +204,26 @@ export class Interact {
     this.app.nudgePower(delta < 0 ? step : -step);
   }
 
+  _moveKeyFromEvent(e) {
+    if (e.code && MOVE_CODES[e.code]) return MOVE_CODES[e.code];
+    const k = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+    return MOVE_KEYS.has(k) ? k : null;
+  }
+
+  keyUp(e) {
+    const mk = this._moveKeyFromEvent(e);
+    if (mk) this.moveKeys.delete(mk);
+  }
+
   key(e) {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+      const mk = this._moveKeyFromEvent(e);
+      if (mk) {
+        this.moveKeys.add(mk);
+        return;
+      }
+    }
     const app = this.app;
     const coarse = e.shiftKey;
     const canEditAim = app.mode === 'aim' && !app.isLiveShotRolling();
@@ -206,7 +239,7 @@ export class Interact {
       case 'r': case 'R': app.repeatSituation(); break;
       case 'u': case 'U': app.repeatSituation(); break;
       case 'p': case 'P': app.replayLast(); break;
-      case 'c': case 'C': if (app.mode !== 'playback') app.focusCueBall(); break;
+      case 'c': case 'C': app.focusCueBall({ alignAim: true }); break;
       case 'n': case 'N': app.startFullRack(); break;
       case 'm': case 'M': app.toggleMode(); break;
       case 'ArrowLeft': if (canEditAim) { e.preventDefault(); app.nudgeAim(coarse ? 0.5 : -0.05); } break;

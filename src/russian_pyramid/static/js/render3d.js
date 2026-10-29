@@ -47,11 +47,14 @@ export class Renderer3D {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI * 0.495;
-    this.controls.minDistance = 0.6;
+    this.controls.minDistance = 0.45;
     this.controls.maxDistance = 7;
-    // right button stays free for ball removal in place mode
+    this.controls.enablePan = true;
+    // Pan horizontally across the table surface (XZ plane) without sinking the pivot
+    this.controls.screenSpacePanning = false;
+    this.controls.panSpeed = 1.0;
     this.controls.mouseButtons = {
-      LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: null,
+      LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN,
     };
     this.controls.target.set(table.w / 2, Y0, table.l * 0.52);
 
@@ -358,8 +361,11 @@ export class Renderer3D {
     if (typeof phi === 'number') {
       const rad = (phi * Math.PI) / 180;
       const curOffset = this.camera.position.clone().sub(this.controls.target);
-      const horizDist = Math.max(0.85, Math.min(Math.hypot(curOffset.x, curOffset.z) || 1.15, 1.45));
-      const height = Math.max(0.75, Math.min(curOffset.y || 1.35, 1.65));
+      const curHoriz = Math.hypot(curOffset.x, curOffset.z) || 1.15;
+      const curHeight = curOffset.y || 1.15;
+      // Keep a comfortable over-the-cue framing so both the cue stick and aim line stay visible
+      const horizDist = Math.max(0.95, Math.min(curHoriz, 1.35));
+      const height = Math.max(0.75, Math.min(curHeight, 1.35));
       pos = new THREE.Vector3(
         x - Math.cos(rad) * horizDist,
         ny + height,
@@ -381,6 +387,60 @@ export class Renderer3D {
 
   follow(x, y, z) {
     this.focusOn(x, y, z, { smooth: false });
+  }
+
+  // Free horizontal/vertical table exploration (WASD + Q/E), independent of any ball.
+  panCamera(forward, right, up, dt) {
+    if (!forward && !right && !up) return;
+    this._camGoal = null;
+    const viewDir = this.controls.target.clone().sub(this.camera.position);
+    let fx = viewDir.x;
+    let fz = viewDir.z;
+    let fLen = Math.hypot(fx, fz);
+    if (fLen < 1e-4) {
+      // Top-down view: fall back to camera's screen-up projected onto XZ
+      const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+      fx = camUp.x;
+      fz = camUp.z;
+      fLen = Math.hypot(fx, fz) || 1;
+    }
+    fx /= fLen;
+    fz /= fLen;
+    // Right vector in Three.js right-handed world (Y up): forward × up = (-fz, 0, fx)
+    const rx = -fz;
+    const rz = fx;
+
+    const dx = (fx * forward + rx * right) * dt;
+    const dz = (fz * forward + rz * right) * dt;
+    const dy = up * dt;
+
+    this.controls.target.x += dx;
+    this.controls.target.z += dz;
+    this.camera.position.x += dx;
+    this.camera.position.z += dz;
+    if (dy !== 0) {
+      const nextCamY = Math.max(Y0 + 0.12, Math.min(4.5, this.camera.position.y + dy));
+      this.camera.position.y = nextCamY;
+    }
+    this._clampTargetToRoom();
+  }
+
+  _clampTargetToRoom() {
+    if (!this._dims) return;
+    const pad = 0.85;
+    const tg = this.controls.target;
+    const clampedX = Math.max(-pad, Math.min(this._dims.w + pad, tg.x));
+    const clampedZ = Math.max(-pad, Math.min(this._dims.l + pad, tg.z));
+    const clampedY = Math.max(Y0 - 0.02, Math.min(Y0 + 0.6, tg.y));
+    const dx = clampedX - tg.x;
+    const dy = clampedY - tg.y;
+    const dz = clampedZ - tg.z;
+    if (dx !== 0 || dy !== 0 || dz !== 0) {
+      tg.set(clampedX, clampedY, clampedZ);
+      this.camera.position.x += dx;
+      this.camera.position.y += dy;
+      this.camera.position.z += dz;
+    }
   }
 
   // ---------- frame -------------------------------------------------------
@@ -415,6 +475,7 @@ export class Renderer3D {
       this.focusRing.visible = false;
     }
     this.controls.update();
+    if (!this._camGoal) this._clampTargetToRoom();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -602,6 +663,28 @@ export class Renderer3D {
     if (rect.width < 2) return null;
     this._ndc.set((px / rect.width) * 2 - 1, -(py / rect.height) * 2 + 1);
     this._raycaster.setFromCamera(this._ndc, this.camera);
+    const hit = this._raycaster.ray.intersectPlane(this._pickPlane, this._pickOut);
+    return hit ? [this._pickOut.x, this._pickOut.z] : null;
+  }
+
+  // Aiming target pick: raycasts 3D object-ball spheres first so clicking on a
+  // target ball from any camera angle aims directly at that surface point
+  // without plane-projection parallax, then falls back to the ball-center plane.
+  aimFromClient(px, py, excludeBallId = null) {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width < 2) return null;
+    this._ndc.set((px / rect.width) * 2 - 1, -(py / rect.height) * 2 + 1);
+    this._raycaster.setFromCamera(this._ndc, this.camera);
+    const targets = [];
+    for (const [id, mesh] of this._ballMeshes) {
+      if (id !== excludeBallId && mesh.visible) targets.push(mesh);
+    }
+    if (targets.length) {
+      const hits = this._raycaster.intersectObjects(targets, false);
+      if (hits.length) {
+        return [hits[0].point.x, hits[0].point.z];
+      }
+    }
     const hit = this._raycaster.ray.intersectPlane(this._pickPlane, this._pickOut);
     return hit ? [this._pickOut.x, this._pickOut.z] : null;
   }
@@ -956,6 +1039,7 @@ function buildCueStick() {
   );
   wrap.position.y = -shaftLen - buttLen / 2;
 
+  for (const m of [shaft, tip, wrap]) m.frustumCulled = false;
   group.add(shaft, tip, wrap);
   return group;
 }

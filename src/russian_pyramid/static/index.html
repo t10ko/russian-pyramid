@@ -5,22 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Russian Pyramid — Test Ground</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='22' r='11' fill='%23f2c94c'/%3E%3Ccircle cx='21' cy='42' r='11' fill='%23f5efe0'/%3E%3Ccircle cx='43' cy='42' r='11' fill='%23f5efe0'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=13">
+  <link rel="stylesheet" href="/css/app.css?v=14">
   <script type="importmap">
     {
       "imports": {
         "three": "/vendor/three.module.js",
         "three/addons/": "/vendor/unmapped/",
         "three/addons/controls/": "/vendor/",
-        "/js/aim.js": "/js/aim.js?v=13",
-        "/js/api.js": "/js/api.js?v=13",
-        "/js/geometry.js": "/js/geometry.js?v=13",
-        "/js/interact.js": "/js/interact.js?v=13",
-        "/js/main.js": "/js/main.js?v=13",
-        "/js/playback.js": "/js/playback.js?v=13",
-        "/js/render.js": "/js/render.js?v=13",
-        "/js/render3d.js": "/js/render3d.js?v=13",
-        "/js/ui.js": "/js/ui.js?v=13"
+        "/js/aim.js": "/js/aim.js?v=14",
+        "/js/api.js": "/js/api.js?v=14",
+        "/js/geometry.js": "/js/geometry.js?v=14",
+        "/js/interact.js": "/js/interact.js?v=14",
+        "/js/main.js": "/js/main.js?v=14",
+        "/js/playback.js": "/js/playback.js?v=14",
+        "/js/render.js": "/js/render.js?v=14",
+        "/js/render3d.js": "/js/render3d.js?v=14",
+        "/js/ui.js": "/js/ui.js?v=14"
       }
     }
   </script>
@@ -122,10 +122,11 @@
     <h2>Controls</h2>
     <table class="keys">
       <tr><td>drag</td><td>orbit the camera · wheel zooms</td></tr>
+      <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / right-drag</td><td>move freely around the table (<kbd>Q</kbd>/<kbd>E</kbd> height, <kbd>⌘</kbd>+drag pans)</td></tr>
       <tr><td>click a ball</td><td>select that ball as the cue ball and focus camera on it</td></tr>
       <tr><td><kbd>C</kbd></td><td>move camera back behind the active cue ball</td></tr>
       <tr><td><kbd>N</kbd></td><td>new game — rack all 15 white balls</td></tr>
-      <tr><td><kbd>Shift</kbd>+drag</td><td>aim the cue from the cue ball</td></tr>
+      <tr><td><kbd>Shift</kbd>+click / drag</td><td>aim the cue immediately at the clicked target point</td></tr>
       <tr><td><kbd>Shift</kbd>+wheel</td><td>cue speed</td></tr>
       <tr><td><kbd>space</kbd></td><td>shoot</td></tr>
       <tr><td><kbd>R</kbd> / <kbd>U</kbd></td><td>repeat the same situation</td></tr>
@@ -143,7 +144,7 @@
     <button id="help-close" class="btn">Close</button>
   </dialog>
 
-  <script type="module" src="/js/main.js?v=13"></script>
+  <script type="module" src="/js/main.js?v=14"></script>
   <script>
     // Runtime probe for headless debugging: append ?debug=1 to the URL and a
     // green #debug-out line reports renderer/canvas/rAF status after load.

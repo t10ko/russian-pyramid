@@ -39,7 +39,7 @@ export class Playback {
     this.events = shot.events || [];
     this.pottedEvents = this.events.filter((e) => e.type === 'pocket');
     this.frames = this._cleanFrames(shot.frames, this.pottedEvents);
-    const cueId = shot.state?.cue_ball_id || 'cue';
+    const cueId = shot.cue_ball_id || shot.state?.cue_ball_id || 'cue';
     const startXYZ = this.frames?.[cueId]?.xyz?.[0] || this.frames?.cue?.xyz?.[0] || null;
     const cueParams = shot.attempt?.params || shot.state?.aim || null;
     this.shotCue = (startXYZ && cueParams)

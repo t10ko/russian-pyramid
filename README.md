@@ -60,10 +60,11 @@ Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) ball
   - **Parallel Off-Center Cue Shift**: Adjusting horizontal/vertical spin (`a`, `b`) on the spin pad translates the 3D cue stick in parallel across the cue ball's face.
   - **Collinear Sightline**: The dashed aiming line stays strictly collinear with the cue shaft so you see where the cue tip is actually pointing, while the physics engine accounts for off-center squirt, swerve, and collision throw.
   - **Animated Cue Stroke**: Smooth pullback, acceleration, and follow-through on both live shots and replays.
-  - **Relative `Shift + Drag` Aiming**: Holding <kbd>Shift</kbd> and dragging adjusts aim angle (`φ`) smoothly relative to your current aim without jumping on click.
-- **True 3D Camera System**:
-  - Drag to orbit freely; scroll wheel to zoom.
-  - Click any ball on the table to make it the active striker ball and focus the camera on it (essential for Russian Pyramid, where any ball can be played as the cue ball).
+  - **Direct Target Aiming (`Shift + Click / Drag`)**: Hold <kbd>Shift</kbd> and click (or drag) where you want to hit on the target ball or cloth — the cue's sightline snaps immediately to that target point, matching how you pick a contact point in real life.
+- **Free-Roaming 3D Camera System**:
+  - Drag to orbit; scroll wheel to zoom.
+  - **Explore Untethered**: Walk freely around the entire 12-ft table using <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> (<kbd>Q</kbd>/<kbd>E</kbd> for height) or pan across the cloth with **Right-drag** / <kbd>⌘</kbd>+**Drag** to inspect pocket jaws and contact points up close without being tied to a ball.
+  - Click any ball to shoot with it, or press <kbd>C</kbd> anytime to return right behind your active cue ball.
   - One-click presets: **TV angle** (over the shoulder of the active ball) and **Top-down** view.
 - **Authentic 12-ft Tournament Geometry**:
   - 3.56 × 1.78 m playing surface.
@@ -131,11 +132,12 @@ packaging/build_macos.sh
 
 | Input | Action |
 | :--- | :--- |
-| **Drag** | Orbit camera around the followed ball |
+| **Drag** | Orbit camera around current view point |
+| <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / **Right-Drag** (<kbd>⌘</kbd>+**Drag**) | Move freely around the table without being tied to a ball (<kbd>Q</kbd>/<kbd>E</kbd> height) |
 | **Scroll Wheel** | Zoom camera in / out |
 | **Click ball** | Follow that ball and make it the active cue ball |
 | <kbd>C</kbd> | Move camera focus back behind the active cue ball |
-| <kbd>Shift</kbd> + **Drag** | Adjust cue aim angle (`φ`) relative to current aim |
+| <kbd>Shift</kbd> + **Click / Drag** | Aim the cue immediately at the clicked/dragged target point |
 | <kbd>Shift</kbd> + **Wheel** | Adjust cue striking speed (power) |
 | <kbd>Space</kbd> | Shoot (or skip to end of current shot animation) |
 | <kbd>R</kbd> / <kbd>U</kbd> | Repeat the pre-shot situation (adopts replayed attempt's aim if in Playback mode) |

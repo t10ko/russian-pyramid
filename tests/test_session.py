@@ -92,3 +92,14 @@ def test_state_payload_shape(session):
     assert any(b["is_cue"] for b in st["balls"])
     assert {"V0", "phi", "theta", "a", "b"} <= set(st["aim"])
     assert len(st["drills"]) == len(config.PHYSICS_PRESETS) or True
+
+
+def test_svoyak_pot_falls_back_to_surviving_ball(warm):
+    s = PracticeSession("svoyak")
+    payload = s.shoot({"V0": 1.7, "phi": 73.30, "a": 0.15, "b": 0.10})
+    assert "cue" in payload["potted"]
+    assert payload["cue_potted"] is False
+    assert payload["cue_ball_id"] == "cue"
+    # Active striker ball falls back to surviving ball "1" so cue never disappears
+    assert s.cue_ball_id == "1"
+    assert s.state()["cue_on_table"] is True

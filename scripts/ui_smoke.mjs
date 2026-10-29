@@ -206,20 +206,28 @@ app.nudgeAim(0.25);
 app.nudgePower(0.5);
 pumpFrames(3);
 
-// verify Shift+pointerdown does NOT jump phi, and pointermove rotates relatively
+// verify Shift+pointerdown IMMEDIATELY aims toward the clicked target point, and drag updates target
 const phiBeforeDown = app.aim.phi;
 const wrapEl = getEl('table-wrap');
 const canvasEl = getEl('table3d');
-wrapEl.dispatchEvent({ type: 'pointerdown', button: 0, shiftKey: true, pointerId: 1, clientX: 250, clientY: 200, target: canvasEl });
-if (Math.abs(app.aim.phi - phiBeforeDown) > 1e-6) {
-  violations.push(`Shift+pointerdown jumped phi from ${phiBeforeDown} to ${app.aim.phi}`);
+app.setAim({ phi: 0, a: 0.25, b: 0 }, false);
+wrapEl.dispatchEvent({ type: 'pointerdown', button: 0, shiftKey: true, pointerId: 1, clientX: 250, clientY: 160, target: canvasEl });
+const targetDown = app.renderer.tableFromClient(250, 160);
+const previewDown = app.buildScene().aim;
+// Verify the collinear aim ray (lineOrigin + t * dir, t > 0) passes straight through targetDown
+const toTarget = [targetDown[0] - previewDown.lineOrigin[0], targetDown[1] - previewDown.lineOrigin[1]];
+const perpErr = Math.abs(toTarget[0] * previewDown.dir[1] - toTarget[1] * previewDown.dir[0]);
+const dotFwd = toTarget[0] * previewDown.dir[0] + toTarget[1] * previewDown.dir[1];
+if (perpErr > 1e-4 || dotFwd <= 0) {
+  violations.push(`Shift+pointerdown did not aim cue sightline directly at clicked target (perpErr=${perpErr}, dot=${dotFwd})`);
 }
-wrapEl.dispatchEvent({ type: 'pointermove', button: 0, shiftKey: true, pointerId: 1, clientX: 290, clientY: 200, target: canvasEl });
-if (Math.abs(app.aim.phi - phiBeforeDown) < 0.05) {
-  violations.push('Shift+pointermove did not adjust phi relatively');
+const phiAfterDown = app.aim.phi;
+wrapEl.dispatchEvent({ type: 'pointermove', button: 0, shiftKey: true, pointerId: 1, clientX: 330, clientY: 160, target: canvasEl });
+if (Math.abs(app.aim.phi - phiAfterDown) < 0.05) {
+  violations.push('Shift+pointermove did not track moved target');
 }
-wrapEl.dispatchEvent({ type: 'pointerup', button: 0, shiftKey: true, pointerId: 1, clientX: 290, clientY: 200, target: canvasEl });
-app.setAim({ phi: phiBeforeDown }, false);
+wrapEl.dispatchEvent({ type: 'pointerup', button: 0, shiftKey: true, pointerId: 1, clientX: 330, clientY: 160, target: canvasEl });
+app.setAim({ phi: phiBeforeDown, a: 0, b: 0 }, false);
 
 // spin clamp check: setting spin outside MAX_SPIN_R (0.50) clamps radius to <= 0.50
 app.setAim({ a: 0, b: 0 }, false);
@@ -333,9 +341,17 @@ while ((app.playback.playing || app.playback.time < app.playback.duration) && re
 if (app.mode !== 'playback' || !getEl('power').disabled || !app.spinPad.disabled) {
   violations.push('Playback mode exited automatically at end of replay instead of staying in Playback mode');
 }
+// Regression check: focusing cue ball from Playback mode must exit Playback mode cleanly and show the cue stick
+app.focusCueBall();
+if (app.mode !== 'aim' || getEl('power').disabled || app.spinPad.disabled || !app.buildScene().aim?.stick) {
+  violations.push('focusCueBall() from Playback mode caused cue stick to disappear or left controls locked');
+}
+// Also check normal Playback -> Aim exit restores saved live aim
+app.setAim({ phi: 123.45, V0: 4.5 });
+app.replayLast();
 app.setMode('aim');
 if (app.mode !== 'aim' || getEl('power').disabled || app.spinPad.disabled ||
-    Math.abs(app.aim.phi - 123.45) > 1e-3) {
+    Math.abs(app.aim.phi - 123.45) > 1e-3 || !app.buildScene().aim?.stick) {
   violations.push('Exiting Playback mode via Aim did not unlock controls and restore live aim');
 }
 

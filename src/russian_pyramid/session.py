@@ -182,8 +182,9 @@ class PracticeSession:
                 raise ShotError("the selected cue ball is in the pocket -- pick another ball or respawn cue")
             aim = self.cue.as_dict()
             self.pre_shot = (dict(self.positions), dict(aim), self.cue_ball_id)
+            struck_ball_id = self.cue_ball_id
             result = physics.simulate(
-                self.positions, aim, self.physics_preset, cue_ball_id=self.cue_ball_id
+                self.positions, aim, self.physics_preset, cue_ball_id=struck_ball_id
             )
             cushion_hits = sum(1 for e in result.events
                                if e["type"] in ("cushion", "jaw"))
@@ -199,7 +200,12 @@ class PracticeSession:
             self.positions = {
                 bid: xy for bid, xy in result.final_positions.items()
             }
-            return self._shot_payload(result, attempt)
+            if self.cue_ball_id not in self.positions and not result.cue_potted:
+                if config.CUE_BALL_ID in self.positions:
+                    self.cue_ball_id = config.CUE_BALL_ID
+                elif self.positions:
+                    self.cue_ball_id = sorted(self.positions)[0]
+            return self._shot_payload(result, attempt, cue_ball_id=struck_ball_id)
 
     def predict(self, params: dict | None = None) -> dict:
         with self.lock:
@@ -223,13 +229,19 @@ class PracticeSession:
 
     # -- serialization ---------------------------------------------------------
 
-    def _shot_payload(self, result: physics.ShotResult, attempt: Attempt) -> dict:
+    def _shot_payload(
+        self,
+        result: physics.ShotResult,
+        attempt: Attempt,
+        cue_ball_id: str | None = None,
+    ) -> dict:
         return {
             "frames": result.frames,
             "events": result.events,
             "potted": result.potted,
             "duration": result.duration,
             "cue_potted": result.cue_potted,
+            "cue_ball_id": cue_ball_id or self.cue_ball_id,
             "attempt": asdict(attempt),
             "state": self.state(include_table=False),
         }
