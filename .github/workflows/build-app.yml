@@ -48,7 +48,7 @@ jobs:
           test "$(readlink "$mountpoint/Applications")" = /Applications
           app="$mountpoint/Russian Pyramid.app"
           codesign --verify --deep --strict "$app"
-          lipo -verify_arch "$ARCH" "$app/Contents/MacOS/Russian Pyramid"
+          test "$(lipo -archs "$app/Contents/MacOS/Russian Pyramid")" = "$ARCH"
           server="$app/Contents/MacOS/russian-pyramid"
           version="$("$server" --version | tail -n 1)"
           if [[ "$BUILD_REF" == refs/tags/* ]]; then
