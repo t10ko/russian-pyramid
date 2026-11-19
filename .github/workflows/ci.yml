@@ -21,13 +21,18 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install
-        run: uv pip install -e ".[dev]"
+        run: |
+          indexes=()
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            indexes=(--index https://archive.panda3d.org/simple/)
+          fi
+          uv pip install "${indexes[@]}" -e ".[dev]"
 
       - name: Lint
-        run: uv run ruff check src tests examples
+        run: uv run --no-sync ruff check src tests examples
 
       - name: Test
-        run: uv run pytest
+        run: uv run --no-sync pytest
 
       - name: Check frontend syntax
         run: for f in src/russian_pyramid/static/js/*.js; do node --check "$f"; done
@@ -35,7 +40,7 @@ jobs:
       - name: Headless UI smoke (real server + canvas spec checks)
         if: matrix.os == 'macos-latest' && matrix.python == '3.12'
         run: |
-          uv run russian-pyramid --no-browser --drill straight_corner --port 8123 &
+          uv run --no-sync russian-pyramid --no-browser --drill straight_corner --port 8123 &
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8123/api/state > /dev/null && break
             sleep 1
