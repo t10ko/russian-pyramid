@@ -2,6 +2,9 @@ name: Build macOS app
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -20,7 +23,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Build .app with PyInstaller
         env:
@@ -35,6 +40,7 @@ jobs:
       - name: Smoke test the app on the disk image
         env:
           ARCH: ${{ matrix.arch }}
+          BUILD_REF: ${{ inputs.ref || github.ref }}
         run: |
           mountpoint="$(mktemp -d)"
           hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "packaging/dist/russian-pyramid-$ARCH.dmg"
@@ -45,8 +51,9 @@ jobs:
           lipo -verify_arch "$ARCH" "$app/Contents/MacOS/Russian Pyramid"
           server="$app/Contents/MacOS/russian-pyramid"
           version="$("$server" --version | tail -n 1)"
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
-            test "$version" = "russian-pyramid ${GITHUB_REF_NAME#v}"
+          if [[ "$BUILD_REF" == refs/tags/* ]]; then
+            tag="${BUILD_REF#refs/tags/}"
+            test "$version" = "russian-pyramid ${tag#v}"
           fi
           "$server" --no-browser --port 8123 > "$RUNNER_TEMP/practice-server.log" 2>&1 &
           server_pid=$!
