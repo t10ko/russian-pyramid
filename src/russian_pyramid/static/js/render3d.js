@@ -12,6 +12,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { POCKET_DIMS, POCKET_WELL_DEPTH, buildPocketSpecs } from './geometry.js';
 
 const Y0 = 0.062;             // world height of the cloth surface
 const CUSHION_H = 0.043;
@@ -21,6 +22,12 @@ const WOOD_DARK = 0x2c1b10;
 const LEATHER = 0x2f1c11;
 const LEATHER_RIM = 0x3d2416;
 const BRASS = 0xc89b3c;
+const AIM_COLOR = 0xffd34d;      // cue-ball aim line + ghost-ball footprint
+const CONTACT_COLOR = 0xff3b30;  // contact point on the object ball
+const TARGET_COLOR = 0x45d4ff;   // predicted path of the first ball touched
+const CUE_PATH_COLOR = 0xff5fd2;  // predicted cue-ball path (svoyak when it drops)
+const POT_COLOR = 0x3ddc84;       // end ring when the predicted path drops
+const AIM_BEAM_R = 0.0011;       // m, radius of the aim / trajectory tubes
 const CLOTHS = {
   green: { felt: 0x0d7048, cushion: 0x0a6140, throat: 0x07452c },
   blue: { felt: 0x1362a0, cushion: 0x10578c, throat: 0x0b3d64 },
@@ -115,12 +122,10 @@ export class Renderer3D {
     const railTop = Y0 + CUSHION_H;
 
     // Exact Russian Pyramid mouth & jaw parameters matching pooltool specs:
-    // 72.5 mm corner throat (cNose = 0.0725 / √2 = 0.05127 m, 45° jaws, 10 mm rounded horns),
-    // 82.0 mm side mouth (sNose = 0.0398 m with 14 mm rounded horns + 5° splay -> 82.0 mm gap).
-    const cNose = 0.05127;
+    // 72.5 mm corner throat (cNose = 0.0725 / √2 = 0.05127 m, 45° jaws, 5 mm rounded noses),
+    // 82.0 mm side mouth (sNose with 11 mm rounded noses + 5° splay).
+    const { cNose, sNose, sBack } = POCKET_DIMS;
     const cBack = cNose - cw;           // -0.00373: 45° jaw outer corner at distance cw
-    const sNose = 0.0398;
-    const sBack = 0.0446;
 
     const pocketSpecs = buildPocketSpecs(w, l, cw, cNose, cBack, sNose, sBack);
 
@@ -302,20 +307,60 @@ export class Renderer3D {
     this.fxGroup = new THREE.Group();
     this.scene.add(this.fxGroup);
 
+    // Aim line: a solid, colored beam from the cue ball to the ghost ball.  A
+    // thin tube reads well up close; the 1 px line under it keeps the aim
+    // visible from far away (WebGL ignores linewidth).
+    const aimMat = new THREE.MeshBasicMaterial({
+      color: AIM_COLOR, transparent: true, opacity: 0.92, depthWrite: false,
+    });
     this.aimLine = new THREE.Line(
       new THREE.BufferGeometry(),
-      new THREE.LineDashedMaterial({
-        color: 0xffffff,
-        dashSize: 0.045,
-        gapSize: 0.03,
-        transparent: true,
-        opacity: 0.9,
-        depthWrite: false,
+      new THREE.LineBasicMaterial({
+        color: AIM_COLOR, transparent: true, opacity: 0.95, depthWrite: false,
       }),
     );
     this.aimLine.frustumCulled = false;
-    this.aimLine.renderOrder = 2;
+    this.aimLine.renderOrder = 4;   // over the cue-ball path where they overlap
     this.aimGroup.add(this.aimLine);
+    this.aimBeam = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 10, 1, true), aimMat);
+    this.aimBeam.frustumCulled = false;
+    this.aimBeam.renderOrder = 4;
+    this.aimGroup.add(this.aimBeam);
+
+    // Ghost ball: where the cue ball will sit at the moment of contact, with
+    // its footprint on the cloth, plus a red dot on the exact contact point
+    // of the object ball.
+    this.ghostBall = new THREE.Mesh(
+      new THREE.SphereGeometry(this.ballR, 32, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.13, depthWrite: false,
+      }),
+    );
+    this.ghostBall.renderOrder = 3;
+    this.aimGroup.add(this.ghostBall);
+    this.ghostRing = new THREE.Mesh(
+      new THREE.RingGeometry(this.ballR * 0.9, this.ballR, 48),
+      new THREE.MeshBasicMaterial({
+        color: AIM_COLOR, transparent: true, opacity: 0.6, side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    this.ghostRing.rotation.x = -Math.PI / 2;
+    this.aimGroup.add(this.ghostRing);
+    this.contactDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.0042, 16, 12),
+      new THREE.MeshBasicMaterial({ color: CONTACT_COLOR }),
+    );
+    this.aimGroup.add(this.contactDot);
+
+    // Predicted trajectories (physics): first ball touched (T), cue ball (Y)
+    this._paths = {};
+    for (const [slot, color] of [['target', TARGET_COLOR], ['cue', CUE_PATH_COLOR]]) {
+      const group = new THREE.Group();
+      group.visible = false;
+      this.scene.add(group);
+      this._paths[slot] = { group, color, key: null };
+    }
 
     this.stick = buildCueStick();
     this.aimGroup.add(this.stick);
@@ -456,6 +501,8 @@ export class Renderer3D {
   draw(scene) {
     this._syncBalls(scene.balls);
     this._syncAim(scene);
+    this._syncPath(this._paths.target, scene.targetPath);
+    this._syncPath(this._paths.cue, scene.cuePath);
     this._syncTrails(scene);
     this._syncFx(scene);
     if (this._camGoal) {
@@ -586,16 +633,30 @@ export class Renderer3D {
     const { cue, dir: aimDir, lineStart, lineEnd, stick, ballR } = aim;
     const showLine = aim.showLine !== false && !!lineEnd;
     this.aimLine.visible = showLine;
+    this.aimBeam.visible = showLine;
     if (showLine) {
       const zA = Y0 + ballR;
       const startX = lineStart ? lineStart[0] : (aimDir ? cue[0] + aimDir[0] * (ballR + 0.004) : cue[0]);
       const startY = lineStart ? lineStart[1] : (aimDir ? cue[1] + aimDir[1] * (ballR + 0.004) : cue[1]);
-      this.aimLine.geometry.setFromPoints([
-        new THREE.Vector3(startX, zA, startY),
-        new THREE.Vector3(lineEnd[0], zA, lineEnd[1]),
-      ]);
-      this.aimLine.computeLineDistances();
+      const a = new THREE.Vector3(startX, zA, startY);
+      const b = new THREE.Vector3(lineEnd[0], zA, lineEnd[1]);
+      this.aimLine.geometry.setFromPoints([a, b]);
       this.aimLine.geometry.computeBoundingSphere();
+      placeBeam(this.aimBeam, a, b, AIM_BEAM_R);
+    }
+
+    // ghost ball + contact point (only when the line ends on a ball)
+    const hasGhost = showLine && !!aim.ghost && !!aim.objBall;
+    this.ghostBall.visible = hasGhost;
+    this.ghostRing.visible = hasGhost;
+    this.contactDot.visible = hasGhost;
+    if (hasGhost) {
+      const [gx, gy] = aim.ghost;
+      this.ghostBall.position.set(gx, Y0 + ballR, gy);
+      this.ghostRing.position.set(gx, Y0 + 0.0015, gy);
+      const ox = aim.objBall.xy[0] - gx, oy = aim.objBall.xy[1] - gy;
+      const n = Math.hypot(ox, oy) || 1;
+      this.contactDot.position.set(gx + (ox / n) * ballR, Y0 + ballR, gy + (oy / n) * ballR);
     }
 
     // stick: mesh origin is its tip end, so anchor it at the TIP point and
@@ -608,6 +669,79 @@ export class Renderer3D {
     const dir = tip.clone().sub(butt).normalize();   // butt -> tip (+Y local)
     this.stick.position.copy(tip);
     this.stick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+  }
+
+  // Predicted ball path (rebuilt only when the prediction changes): a tube +
+  // 1 px line, ending in a green ring if the ball drops, else a faint ghost
+  // of the ball where it comes to rest.
+  _syncPath(slot, tp) {
+    if (!tp || !tp.pts || tp.pts.length < 2) {
+      slot.group.visible = false;
+      return;
+    }
+    slot.group.visible = true;
+    if (tp.key === slot.key) return;
+    slot.key = tp.key;
+    for (const child of slot.group.children) {
+      child.geometry?.dispose();
+      child.material?.dispose();
+    }
+    slot.group.clear();
+
+    // drop near-duplicate samples (resting / slow tail) to keep the tube light
+    const verts = [];
+    for (const p of tp.pts) {
+      const v = new THREE.Vector3(p[0], Y0 + Math.max(p[2] ?? this.ballR, 0), p[1]);
+      if (!verts.length || verts[verts.length - 1].distanceTo(v) > 0.004) verts.push(v);
+    }
+    const lastP = tp.pts[tp.pts.length - 1];
+    const lastV = new THREE.Vector3(lastP[0], Y0 + this.ballR, lastP[1]);
+    if (verts[verts.length - 1].distanceTo(lastV) > 1e-4) verts.push(lastV);
+    if (verts.length < 2) return;
+
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(verts),
+      new THREE.LineBasicMaterial({
+        color: slot.color, transparent: true, opacity: 0.95, depthWrite: false,
+      }),
+    );
+    line.frustumCulled = false;
+    line.renderOrder = 2;
+    slot.group.add(line);
+
+    const path = new THREE.CurvePath();
+    for (let i = 1; i < verts.length; i++) path.add(new THREE.LineCurve3(verts[i - 1], verts[i]));
+    const tube = new THREE.Mesh(
+      new THREE.TubeGeometry(path, Math.min(600, verts.length * 2), AIM_BEAM_R, 6, false),
+      new THREE.MeshBasicMaterial({
+        color: slot.color, transparent: true, opacity: 0.85, depthWrite: false,
+      }),
+    );
+    tube.frustumCulled = false;
+    tube.renderOrder = 2;
+    slot.group.add(tube);
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(this.ballR * 0.85, this.ballR, 48),
+      new THREE.MeshBasicMaterial({
+        color: tp.potted ? POT_COLOR : slot.color, transparent: true, opacity: 0.75,
+        side: THREE.DoubleSide, depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(lastP[0], Y0 + 0.0016, lastP[1]);
+    slot.group.add(ring);
+    if (!tp.potted) {
+      const ghost = new THREE.Mesh(
+        new THREE.SphereGeometry(this.ballR, 28, 16),
+        new THREE.MeshBasicMaterial({
+          color: slot.color, transparent: true, opacity: 0.12, depthWrite: false,
+        }),
+      );
+      ghost.position.set(lastP[0], Y0 + this.ballR, lastP[1]);
+      ghost.renderOrder = 3;
+      slot.group.add(ghost);
+    }
   }
 
   _syncTrails(scene) {
@@ -691,6 +825,16 @@ export class Renderer3D {
 }
 
 // ---------- Russian Pyramid table & pocket geometry builders ----------------
+
+// Stretch a unit open cylinder (height 1 along +Y) between world points a, b.
+function placeBeam(mesh, a, b, radius) {
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 1e-6) { mesh.visible = false; return; }
+  mesh.position.copy(a).addScaledVector(dir, 0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.divideScalar(len));
+  mesh.scale.set(radius, len, radius);
+}
 
 // Extrude a 2D shape defined in table (x, y) coordinates so its top face sits
 // at world y = topY and extrudes downward by `height`.
@@ -786,12 +930,12 @@ function roundedPolyToShape(pts, radii, arcSteps = 16) {
 }
 
 // Six cushion polygons in table (x, y) with per-vertex rounding radii:
-// 10 mm rounded corner jaw horns (72.5 mm throat) and 14 mm rounded side jaw
-// horns (82.0 mm mouth).
+// 5 mm rounded corner jaw noses (72.5 mm throat) and 11 mm rounded side jaw
+// noses (82.0 mm mouth).
 function buildCushionPolygons(w, l, cw, cNose, cBack, sNose, sBack) {
   const my = l / 2;
-  const rC = 0.010;
-  const rS = 0.014;
+  const rC = 0.005;   // R1 = 5 mm corner nose (regulation, = physics corner_jaw_radius)
+  const rS = 0.011;   // R2 = 11 mm side nose (regulation, = physics side_jaw_radius)
   const rB = 0.004;
   return [
     // left-bottom long cushion
@@ -831,51 +975,6 @@ function buildWoodenRailPolygons(w, l, cw, wood, cNose, sNose) {
     // top short rail
     [[cOut, l + rOut], [cIn, l + cw], [w - cIn, l + cw], [w - cOut, l + rOut]],
   ];
-}
-
-// Descriptor for each of the 6 Russian Pyramid pockets in its local (s, t)
-// coordinate frame: origin at the corner / rail midpoint, `u` pointing outward
-// into the pocket, `v` across the mouth (90° CCW from `u`).
-function buildPocketSpecs(w, l, cw, cNose, cBack, sNose, sBack) {
-  const s2 = Math.SQRT1_2;
-  const cornerIn = -cNose * s2 + 0.006;         // -0.0302 m (inside rounded jaw horn line)
-  const cornerOut = (2 * cw - cNose) * s2;      // +0.0415 m (outer jaw end at cw)
-  const cornerHalf = cNose * s2;                //  0.03625 m (half of 72.5 mm corner throat)
-  const corners = [
-    { id: 'lb', origin: [0, 0], u: [-s2, -s2] },
-    { id: 'lt', origin: [0, l], u: [-s2, s2] },
-    { id: 'rb', origin: [w, 0], u: [s2, -s2] },
-    { id: 'rt', origin: [w, l], u: [s2, s2] },
-  ].map((c) => ({
-    ...c,
-    corner: true,
-    v: [-c.u[1], c.u[0]],
-    sIn: cornerIn,
-    sLip: cornerIn + 0.015,     // concave slate/cloth fall-edge (скат лузы)
-    sOut: cornerOut,
-    halfMouth: cornerHalf,
-    halfBack: cornerHalf,
-    sWell: cornerOut + 0.007,   // circular drop basket center behind the jaws
-    rWell: 0.039,               // 78 mm basket diameter (snug behind 72.5 mm throat)
-  }));
-
-  const sides = [
-    { id: 'lc', origin: [0, l / 2], u: [-1, 0] },
-    { id: 'rc', origin: [w, l / 2], u: [1, 0] },
-  ].map((s) => ({
-    ...s,
-    corner: false,
-    v: [-s.u[1], s.u[0]],
-    sIn: 0.005,
-    sLip: -0.009,               // shallow concave fall-edge between side jaw horns
-    sOut: cw * 0.78,
-    halfMouth: 0.041,           // half of 82.0 mm side pocket mouth
-    halfBack: sBack,
-    sWell: cw * 0.82,
-    rWell: 0.043,               // 86 mm basket diameter behind 82.0 mm side mouth
-  }));
-
-  return [...corners, ...sides];
 }
 
 function pocketPt(ps, s, t) {
@@ -937,7 +1036,7 @@ function pocketLipShape(ps) {
 // straps/rings, leather jaw facings (губы), curved leather apron/hood
 // (пелерина), and polished brass bracket (скоба).
 function buildRussianPocket(group, ps, railTop, mats) {
-  const wellDepth = 0.115;
+  const wellDepth = POCKET_WELL_DEPTH;
 
   // 1. Deep dark pocket well wall + bottom disc
   const wellOuter = pocketCutoutPath(ps, 0.004, new THREE.Shape());

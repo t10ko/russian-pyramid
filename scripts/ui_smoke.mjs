@@ -169,10 +169,21 @@ globalThis.fetch = async (path, opts) => {
   if (path === '/api/aim') payload = fixtures['/api/state'].aim;
   else if (path === '/api/undo') payload = fixtures['/api/state'];
   else if (path === '/api/cue-ball') payload = { ...fixtures['/api/state'], cue_ball_id: body.id };
+  else if (path === '/api/predict' && body.target_only) payload = fakeTargetPrediction();
   else if (fixtures[path]) payload = fixtures[path];
   else throw new Error(`unexpected fetch: ${path} ${JSON.stringify(body).slice(0, 80)}`);
   return { ok: true, status: 200, json: async () => payload };
 };
+
+// target-only prediction derived from the shot fixture: object ball "1"
+function fakeTargetPrediction() {
+  const f = fixtures['/api/shoot'].frames?.['1'] || { t: [], xyz: [] };
+  const c = fixtures['/api/shoot'].frames?.cue || { t: [], xyz: [] };
+  return {
+    target: '1', path: { t: f.t, xyz: f.xyz }, potted: true, pocket: 'rt', contact: null,
+    cue: { path: { t: c.t, xyz: c.xyz }, potted: false, pocket: null },
+  };
+}
 
 // ---------------------------------------------------------------- drive it
 // Force the 2D renderer: the harness has no WebGL.  Register the import-map
@@ -353,6 +364,43 @@ app.setMode('aim');
 if (app.mode !== 'aim' || getEl('power').disabled || app.spinPad.disabled ||
     Math.abs(app.aim.phi - 123.45) > 1e-3 || !app.buildScene().aim?.stick) {
   violations.push('Exiting Playback mode via Aim did not unlock controls and restore live aim');
+}
+
+// target-ball path toggle: debounced prediction lands in the scene, and
+// switching it off clears it
+app.setTargetPath(true);
+pumpFrames(2);
+await sleep(200);
+pumpFrames(2);
+const tpScene = app.buildScene();
+if (!tpScene.targetPath || tpScene.targetPath.id !== '1' || tpScene.targetPath.pts.length < 2) {
+  violations.push('target-ball path did not appear after enabling the toggle');
+}
+if (!tpScene.cuePath || tpScene.cuePath.pts.length < 2) {
+  violations.push('cue-ball (svoyak) path missing while its toggle is on');
+}
+app.setTargetPath(false);
+app.setCuePath(false);
+pumpFrames(2);
+const offScene = app.buildScene();
+if (offScene.targetPath || offScene.cuePath) violations.push('ball paths still shown after disabling');
+app.setCuePath(true);
+
+// pot drop: the potted ball falls below the cloth after capture (and is gone in 2D)
+{
+  const payload = app.attemptShots.get(app.latestAttemptN());
+  const pot = payload?.events?.find((e) => e.type === 'pocket');
+  if (pot) {
+    app.enterPlaybackForAttempt(app.latestAttemptN(), { autoPlay: false });
+    const drop = app.playback.drops[pot.balls[0]];
+    if (!drop || !(drop.settleT > 0)) violations.push('pot drop trajectory missing');
+    const deep = drop && app.playback._dropPose(drop, drop.settleT);
+    if (!deep || deep.xyz[2] > -0.05) violations.push(`potted ball did not settle in the basket (z=${deep?.xyz[2]})`);
+    app.playback.seek(pot.t + drop.settleT);
+    const vb = app.playback.visualBalls(app.staticBalls(), true).find((b) => b.id === pot.balls[0]);
+    if (!vb?.hidden) violations.push('2D view still shows a ball that dropped into the pocket');
+    app.setMode('aim');
+  }
 }
 
 // verify 3D table + Russian Pyramid pocket geometry builds cleanly

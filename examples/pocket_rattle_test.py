@@ -2,7 +2,7 @@
 
 This is the headless validation script behind the app's pocket tuning.  It
 builds a 12-foot Russian Pyramid table with the app's configuration and runs
-two shots into a 74 mm corner pocket -- one aimed dead-center along the pocket
+shots into a 72.5 mm corner pocket -- one aimed dead-center along the pocket
 bisector, one off by a quarter of a degree -- and prints what happened.
 
 Run it with the app installed:

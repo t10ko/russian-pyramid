@@ -5,7 +5,9 @@ Standard library only -- the fewer moving parts, the more robust the packaged
 
     GET  /api/state                     full UI state (table, balls, aim, stats)
     POST /api/shoot          {params?}  simulate + apply, returns frames
-    POST /api/predict        {params?}  aim-assist runout paths
+    POST /api/predict        {params?, target_only?}
+                                        aim-assist runout paths (or just the
+                                        struck object ball's trajectory)
     POST /api/aim            {params}   persist aim parameters
     POST /api/undo                     repeat the previous situation
     POST /api/balls/move      {id, xy}
@@ -119,7 +121,8 @@ class _Handler(BaseHTTPRequestHandler):
                     self._json(session.shoot(body.get("params")))
             elif route == "/api/predict":
                 with session.lock:
-                    self._json(session.predict(body.get("params")))
+                    self._json(session.predict(body.get("params"),
+                                               target_only=bool(body.get("target_only"))))
             elif route == "/api/aim":
                 with session.lock:
                     session.set_aim(body)
@@ -183,6 +186,7 @@ def warm_up(session: PracticeSession) -> None:
     """First simulate triggers numba compilation; do it before the user shoots."""
     try:
         session.predict({"V0": 0.5})
+        session.predict({"V0": 0.5}, target_only=True)
     except Exception:  # noqa: BLE001 - warm-up is best effort
         pass
 

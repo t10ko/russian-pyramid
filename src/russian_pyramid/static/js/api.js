@@ -16,6 +16,7 @@ export const api = {
 
   shoot: (params) => req('POST', '/api/shoot', params ? { params } : {}),
   predict: (params) => req('POST', '/api/predict', { params }),
+  predictTarget: (params) => req('POST', '/api/predict', { params, target_only: true }),
 
   aim: (params) => req('POST', '/api/aim', params),
   undo: () => req('POST', '/api/undo', {}),

@@ -4,6 +4,9 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     uses: ./.github/workflows/build-app.yml
@@ -14,12 +17,24 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist
 
-      - uses: softprops/action-gh-release@v2
+      - name: Generate installer checksums
+        working-directory: dist
+        run: sha256sum russian-pyramid-arm64.dmg russian-pyramid-x86_64.dmg > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v3
         with:
-          files: dist/*.dmg
+          files: |
+            dist/russian-pyramid-arm64.dmg
+            dist/russian-pyramid-x86_64.dmg
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          body: |
+            Download `russian-pyramid-arm64.dmg` for an Apple Silicon Mac or `russian-pyramid-x86_64.dmg` for an Intel Mac. Open the disk image and drag **Russian Pyramid** into **Applications**.
+
+            This release is distributed without Apple notarization. If macOS blocks the first launch, use the per-app **Open Anyway** option described in [Apple’s instructions](https://support.apple.com/en-us/102445).
           generate_release_notes: true

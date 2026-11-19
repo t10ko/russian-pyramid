@@ -207,14 +207,25 @@ class PracticeSession:
                     self.cue_ball_id = sorted(self.positions)[0]
             return self._shot_payload(result, attempt, cue_ball_id=struck_ball_id)
 
-    def predict(self, params: dict | None = None) -> dict:
+    def predict(self, params: dict | None = None, target_only: bool = False) -> dict:
+        """Aim-assist prediction for the current aim.
+
+        ``target_only`` returns just the trajectory of the first object ball
+        the cue ball strikes (see :func:`physics.predict_target`); otherwise
+        the full runout paths of every ball.
+        """
         with self.lock:
             if params:
                 self.set_aim(params)
+            if target_only:
+                return physics.predict_target(self.positions, self.cue.as_dict(),
+                                              self.physics_preset,
+                                              cue_ball_id=self.cue_ball_id)
             if self.cue_ball_id not in self.positions:
                 return {"paths": {}, "potted": [], "duration": 0.0}
             return physics.predict_paths(self.positions, self.cue.as_dict(),
-                                         self.physics_preset)
+                                         self.physics_preset,
+                                         cue_ball_id=self.cue_ball_id)
 
     def undo(self) -> None:
         """Restore the situation as it was before the last shot (repeat)."""

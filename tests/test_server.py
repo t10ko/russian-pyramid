@@ -86,3 +86,10 @@ def test_predict(base_url):
     status, data = post(base_url, "/api/predict", {"params": {"V0": 2.0, "phi": 90.0}})
     assert status == 200
     assert "paths" in data
+
+
+def test_predict_target_only(base_url):
+    status, data = post(base_url, "/api/predict",
+                        {"params": {"V0": 2.0, "phi": 90.0}, "target_only": True})
+    assert status == 200
+    assert set(data) == {"target", "path", "potted", "pocket", "contact", "cue"}

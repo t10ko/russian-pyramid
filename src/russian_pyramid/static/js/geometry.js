@@ -90,3 +90,86 @@ export function sweepCircle(p, d, q, cr) {
   if (distSq >= rSq) return null;
   return proj - Math.sqrt(rSq - distSq);
 }
+
+// ---------- pocket geometry (shared by the 3D table and the pot-drop animation)
+
+// Visual mouth parameters matching the pooltool specs in config.py.
+export const POCKET_DIMS = {
+  cNose: 0.05127,   // corner: 72.5 mm throat / sqrt(2) along each rail
+  sNose: 0.0398,    // side: nose vertex half-width at the rail line
+  sBack: 0.0446,    // side: jaw half-width at the back of the cushion (5° splay)
+};
+export const POCKET_WELL_DEPTH = 0.115;   // m from the cloth to the basket floor
+
+// Descriptor for each of the 6 Russian Pyramid pockets in its local (s, t)
+// coordinate frame: origin at the corner / rail midpoint, `u` pointing outward
+// into the pocket, `v` across the mouth (90° CCW from `u`).
+export function buildPocketSpecs(w, l, cw, cNose, cBack, sNose, sBack) {
+  const s2 = Math.SQRT1_2;
+  const cornerIn = -cNose * s2 + 0.006;         // -0.0302 m (inside rounded jaw horn line)
+  const cornerOut = (2 * cw - cNose) * s2;      // +0.0415 m (outer jaw end at cw)
+  const cornerHalf = cNose * s2;                //  0.03625 m (half of 72.5 mm corner throat)
+  const corners = [
+    { id: 'lb', origin: [0, 0], u: [-s2, -s2] },
+    { id: 'lt', origin: [0, l], u: [-s2, s2] },
+    { id: 'rb', origin: [w, 0], u: [s2, -s2] },
+    { id: 'rt', origin: [w, l], u: [s2, s2] },
+  ].map((c) => ({
+    ...c,
+    corner: true,
+    v: [-c.u[1], c.u[0]],
+    sIn: cornerIn,
+    sLip: cornerIn + 0.003,     // fall edge (скат лузы) at the end of the 5.5 mm corridor
+    sOut: cornerOut,
+    halfMouth: cornerHalf,
+    halfBack: cornerHalf,
+    sWell: cornerOut + 0.007,   // circular drop basket center behind the jaws
+    rWell: 0.039,               // 78 mm basket diameter (snug behind 72.5 mm throat)
+  }));
+
+  const sides = [
+    { id: 'lc', origin: [0, l / 2], u: [-1, 0] },
+    { id: 'rc', origin: [w, l / 2], u: [1, 0] },
+  ].map((s) => ({
+    ...s,
+    corner: false,
+    v: [-s.u[1], s.u[0]],
+    sIn: 0.005,
+    sLip: -0.015,               // fall edge ~5 mm in front of the nose line (physics)
+    sOut: cw * 0.78,
+    halfMouth: 0.041,           // half of 82.0 mm side pocket mouth
+    halfBack: sBack,
+    sWell: cw * 0.82,
+    rWell: 0.043,               // 86 mm basket diameter behind 82.0 mm side mouth
+  }));
+
+  return [...corners, ...sides];
+}
+
+
+// Per-pocket frame for the pot-drop animation, in table (x, y) metres:
+// `origin` + s * `u` (outward along the pocket axis) + t * `v` (across).
+//   sLip      axis position of the slate fall edge (ball tips over here)
+//   sBack     back wall of the basket (leather apron / net)
+//   halfWidth half-width the ball can move across while dropping
+//   floor     basket floor height (table z, negative = below the cloth)
+export function pocketDropSpecs(table) {
+  const { cNose, sNose, sBack } = POCKET_DIMS;
+  const cw = table.cushion_width;
+  const specs = buildPocketSpecs(table.w, table.l, cw, cNose, cNose - cw, sNose, sBack);
+  const out = {};
+  for (const ps of specs) {
+    out[ps.id] = {
+      id: ps.id,
+      corner: ps.corner,
+      origin: ps.origin,
+      u: ps.u,
+      v: ps.v,
+      sLip: 0.5 * (ps.sIn + ps.sLip),
+      sBack: ps.sWell + ps.rWell,
+      halfWidth: Math.min(ps.halfMouth, ps.rWell),
+      floor: -POCKET_WELL_DEPTH,
+    };
+  }
+  return out;
+}

@@ -309,3 +309,15 @@ kbd {
   #sidebar { display: none; }
   #toasts { right: 16px; }
 }
+
+/* path-preview color swatches next to the toggles */
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.swatch.target { background: #45d4ff; }
+.swatch.cue { background: #ff5fd2; }

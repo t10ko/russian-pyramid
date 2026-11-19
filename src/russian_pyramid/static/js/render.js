@@ -229,6 +229,8 @@ export class Renderer {
 
     if (scene.aim) this.drawAim(g, scene, view);
     if (scene.assist && !scene.playing) this.drawAssist(g, scene, view);
+    if (scene.targetPath && !scene.playing) this.drawTargetPath(g, scene.targetPath, view);
+    if (scene.cuePath && !scene.playing) this.drawTargetPath(g, scene.cuePath, view, 'rgba(255, 95, 210, 0.9)');
   }
 
   drawBall(g, view, b, scene) {
@@ -288,8 +290,7 @@ export class Renderer {
     if (showLine !== false && lineEnd) {
       const start = lineOrigin || cue;
       g.save();
-      g.setLineDash([view.m(0.05), view.m(0.035)]);
-      g.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+      g.strokeStyle = 'rgba(255, 211, 77, 0.95)';   // solid, same color as the 3D aim beam
       g.lineWidth = Math.max(1.2, view.m(0.004));
       g.beginPath();
       g.moveTo(view.cx(start[1], start[0]), view.cy(start[1], start[0]));
@@ -325,6 +326,21 @@ export class Renderer {
       g.stroke();
       g.restore();
     }
+  }
+
+  drawTargetPath(g, tp, view, color = 'rgba(69, 212, 255, 0.9)') {
+    const pts = tp.pts;
+    if (!pts || pts.length < 2) return;
+    g.save();
+    g.lineWidth = Math.max(1.4, view.m(0.0035));
+    g.strokeStyle = tp.potted ? 'rgba(61, 220, 132, 0.9)' : color;
+    g.beginPath();
+    g.moveTo(view.cx(pts[0][1], pts[0][0]), view.cy(pts[0][1], pts[0][0]));
+    for (let i = 1; i < pts.length; i++) {
+      g.lineTo(view.cx(pts[i][1], pts[i][0]), view.cy(pts[i][1], pts[i][0]));
+    }
+    g.stroke();
+    g.restore();
   }
 
   drawAssist(g, scene, view) {

@@ -124,7 +124,7 @@ export class Interact {
 
   // Aim the cue's sightline from the cue ball directly through the target `xy`.
   // Accounts for horizontal off-center parallel shift (`a`) so the collinear
-  // dashed aiming line lands right on `xy`.
+  // aiming line lands right on `xy`.
   phiToward(xy) {
     const cue = this.app.cueXY();
     const dx = xy[0] - cue[0];
@@ -227,6 +227,10 @@ export class Interact {
     const app = this.app;
     const coarse = e.shiftKey;
     const canEditAim = app.mode === 'aim' && !app.isLiveShotRolling();
+    // Aim steps (deg).  A corner pocket forgives only ~±5 mm, which on a
+    // 1 m + 1 m shot is about ±0.02° of cue direction -- so the default step
+    // must be at least that fine.  Alt/Option = ultra-fine, Shift = coarse.
+    const aimStep = coarse ? 0.5 : (e.altKey ? 0.005 : 0.02);
     switch (e.key) {
       case ' ':
         e.preventDefault();
@@ -242,8 +246,10 @@ export class Interact {
       case 'c': case 'C': app.focusCueBall({ alignAim: true }); break;
       case 'n': case 'N': app.startFullRack(); break;
       case 'm': case 'M': app.toggleMode(); break;
-      case 'ArrowLeft': if (canEditAim) { e.preventDefault(); app.nudgeAim(coarse ? 0.5 : -0.05); } break;
-      case 'ArrowRight': if (canEditAim) { e.preventDefault(); app.nudgeAim(coarse ? -0.5 : 0.05); } break;
+      case 't': case 'T': app.toggleTargetPath(); break;
+      case 'y': case 'Y': app.toggleCuePath(); break;
+      case 'ArrowLeft': if (canEditAim) { e.preventDefault(); app.nudgeAim(-aimStep); } break;
+      case 'ArrowRight': if (canEditAim) { e.preventDefault(); app.nudgeAim(aimStep); } break;
       case 'ArrowUp': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); } break;
       case 'ArrowDown': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? -0.5 : -0.1); } break;
       case '?': app.showHelp(); break;

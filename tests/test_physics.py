@@ -81,3 +81,79 @@ def test_degenerate_setup_never_crashes(warm):
         assert isinstance(result, physics.ShotResult)
     except physics.ShotError:
         pass  # also acceptable: pooltool rejected the setup
+
+
+def test_corner_fall_line_at_end_of_corridor():
+    """Regulation: 5-6 mm parallel corridor, then the ball drops."""
+    table = config.build_table()
+    pocket = table.pockets["lb"]
+    # capture circle's near edge, measured along the bisector into the table
+    center_u = (pocket.center[0] + pocket.center[1]) / math.sqrt(2)
+    fall_line = center_u + pocket.radius
+    jaw = config.TABLE_KWARGS["corner_jaw_radius"]
+    width = config.TABLE_KWARGS["corner_pocket_width"]
+    corridor_start = (width / math.sqrt(2) + jaw * math.tan(math.pi / 8) - jaw) / math.sqrt(2)
+    assert corridor_start - fall_line == pytest.approx(config.CORNER_CORRIDOR, abs=1e-6)
+    assert 0.005 <= config.CORNER_CORRIDOR <= 0.006
+
+
+def test_pocket_event_carries_entry_state(warm):
+    result = physics.simulate(bisector_positions(), {"V0": 3.5, "phi": PHI})
+    pots = [e for e in result.events if e["type"] == "pocket"]
+    assert pots and pots[0]["pocket"] == "rt"
+    vx, vy = pots[0]["vel"]
+    assert vx > 0 and vy > 0                    # heading into the top-right corner
+    assert len(pots[0]["xy"]) == 2
+
+
+def test_predict_target_tracks_struck_ball(warm):
+    out = physics.predict_target(bisector_positions(), {"V0": 3.5, "phi": PHI})
+    assert out["target"] == "1"
+    assert out["potted"] is True and out["pocket"] == "rt"
+    pts = out["path"]["xyz"]
+    assert len(pts) >= 2 and len(pts) == len(out["path"]["t"])
+    # path runs from the object ball toward the corner
+    assert pts[-1][0] > pts[0][0] and pts[-1][1] > pts[0][1]
+
+
+def test_predict_target_without_contact(warm):
+    out = physics.predict_target(bisector_positions(), {"V0": 2.0, "phi": PHI + 90})
+    assert out["target"] is None and out["path"]["xyz"] == []
+    assert out["contact"] is None
+    assert len(out["cue"]["path"]["xyz"]) > 2      # the cue ball still has a path
+
+
+def test_predict_target_contact_is_first_touch(warm):
+    pos = bisector_positions()
+    out = physics.predict_target(pos, {"V0": 3.5, "phi": PHI})
+    cue_at, obj_at = out["contact"]["cue"], out["contact"]["target"]
+    # balls touch at contact, and the object ball hasn't moved yet
+    assert math.dist(cue_at, obj_at) == pytest.approx(2 * config.BALL_R, abs=1e-3)
+    assert math.dist(obj_at, pos["1"]) < 1e-3
+    assert out["cue"]["path"]["xyz"][0][:2] == pytest.approx(list(pos["cue"]), abs=1e-3)
+
+
+def test_predict_target_follows_squirt_not_the_line(warm):
+    """Heavy side spin squirts the cue ball off the cue line: a thin clip on
+    the line becomes a clean miss (or vice versa) -- the preview must follow
+    the physics, i.e. the first ball actually touched."""
+    # the straight cue line overlaps ball "1" by 12 mm: geometrically a hit
+    pos = {"cue": (0.89, 1.0), "1": (0.89 + 2 * config.BALL_R - 0.012, 2.5)}
+    assert physics.predict_target(pos, {"V0": 3.0, "phi": 90.0})["target"] == "1"
+    squirted = physics.predict_target(pos, {"V0": 3.0, "phi": 90.0, "a": -0.45})
+    shot = physics.simulate(pos, {"V0": 3.0, "phi": 90.0, "a": -0.45})
+    assert not any(e["type"] == "ball_ball" for e in shot.events)  # squirt -> clean miss
+    assert squirted["target"] is None and squirted["contact"] is None
+
+
+def test_predict_target_shows_svoyak(warm):
+    """Cue ball dropping after the contact is reported on the cue path."""
+    import numpy as np
+
+    corner = np.array([config.TABLE_KWARGS["w"], config.TABLE_KWARGS["l"]])
+    u = np.array([1.0, 1.0]) / math.sqrt(2)
+    cue = corner - u * 0.6
+    obj = cue - u * 0.4  # object ball *behind* the cue ball: no contact, cue drops
+    out = physics.predict_target({"cue": tuple(cue), "1": tuple(obj)}, {"V0": 1.5, "phi": PHI})
+    assert out["target"] is None
+    assert out["cue"]["potted"] is True and out["cue"]["pocket"] == "rt"

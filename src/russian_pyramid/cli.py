@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import socket
+import errno
 import sys
 import threading
 import webbrowser
@@ -12,17 +12,6 @@ from russian_pyramid import __version__, config
 from russian_pyramid.session import PracticeSession
 
 DEFAULT_PORT = 8765
-
-
-def _find_port(host: str, preferred: int) -> int:
-    for port in (preferred, 0):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.bind((host, port))
-                return sock.getsockname()[1]
-        except OSError:
-            continue
-    raise SystemExit("could not bind a port")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,12 +36,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"unknown drill {args.drill!r} (one of: {', '.join(drills_mod.names())})")
 
     session = PracticeSession(drill=args.drill, physics_preset=args.physics)
-    port = _find_port(args.host, args.port)
 
     from russian_pyramid.server import serve
 
-    httpd = serve(session, args.host, port)
-    url = f"http://{args.host}:{port}"
+    try:
+        httpd = serve(session, args.host, args.port)
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE or args.port == 0:
+            raise
+        httpd = serve(session, args.host, 0)
+    url = f"http://{args.host}:{httpd.server_port}"
 
     print(f"Russian Pyramid {__version__}")
     print(f"  table  : {args.drill} drill, '{args.physics}' cushions")

@@ -2,15 +2,25 @@
 
 Everything here was validated empirically against pooltool 0.6:
 
-* Corner pockets capture a ball only when its center passes within
-  ``corner_pocket_radius`` of the pocket center, which sits exactly
-  ``corner_pocket_depth`` beyond the corner along the diagonal.  The capture
-  radius therefore MUST exceed the depth or the pocket is geometrically
-  un-pottable.  With a 55 mm capture radius and 45 mm depth, a dead-center
-  ball drops and ~0.1 degrees of aim error rattles in the jaws -- the
-  signature brutality of a real 72--74 mm pyramid pocket.
-* The mouth is measured between jaw-tip circles, so the free gap for a
-  68 mm ball is (74 mm - 2*1.5 mm) = 71 mm: about 1.5 mm of slack per side.
+* Pooltool pots a ball the instant its center enters a capture circle
+  (``*_pocket_radius`` around a point ``*_pocket_depth`` beyond the corner /
+  rail).  That circle's near edge is the *fall line*: where the slate ends
+  and the ball tips into the pocket.  It is placed from the ICP/FBSR table
+  regulation rather than tuned by hand:
+
+  - corner pockets: 72-73 mm mouth, R1 = 5 mm rounded rubber noses, and a
+    parallel "corridor" (коридор) of only 5-6 mm before the jaws open up into
+    the pocket.  The fall line therefore sits at the end of that short
+    corridor (see :func:`_corner_fall_depth`).  An earlier version captured
+    balls ~25 mm deep inside a 75 mm-long parallel tunnel, which made corner
+    pots noticeably harder than on a real table.
+  - side pockets: 82-83 mm mouth, R2 = 11 mm noses, corridor 0 mm.  The fall
+    line sits ~5 mm in front of the cushion-nose line (cloth bevel / скат);
+    previously it sat 20 mm out on the cloth, which made sides too generous.
+
+  The capture radius MUST exceed the depth or the pocket is un-pottable.
+* The mouth is measured between the parallel jaw faces: 72.5 mm for a 68 mm
+  ball leaves ~2.25 mm of slack per side on a dead-center entry.
 * e_c / f_c apply to ALL cushions in pooltool (rails and jaws alike), not
   only to the jaws.  Two presets are provided: ``tournament`` for lively
   pyramid rails, and ``research`` for the heavily deadened leather-jaw values.
@@ -28,23 +38,50 @@ from pooltool.objects.table.specs import PocketTableSpecs
 # `pocket_width + 2 * jaw_radius`, so the actual physical gap between the two
 # rounded jaw surfaces is `pocket_width` (72.5 mm corners, 82.0 mm sides for a
 # 68.0 mm ball — official ICP / FBSR Russian Pyramid tournament spec).
+CORNER_POCKET_WIDTH = 0.0725
+CORNER_JAW_RADIUS = 0.005       # R1 = 5 mm rubber nose rounding (regulation)
+CORNER_CORRIDOR = 0.0055        # 5-6 mm parallel corridor before the pocket opens
+CORNER_CAPTURE_RADIUS = 0.060
+
+
+def _corner_fall_depth(width: float = CORNER_POCKET_WIDTH,
+                       jaw_radius: float = CORNER_JAW_RADIUS,
+                       corridor: float = CORNER_CORRIDOR,
+                       capture_radius: float = CORNER_CAPTURE_RADIUS) -> float:
+    """``corner_pocket_depth`` that puts the fall line at the corridor's end.
+
+    With straight jaws (``corner_pocket_angle = 0``) the jaw faces run parallel
+    to the corner bisector.  The rounded nose meets the jaw face at
+    ``u0 = (w/sqrt2 + r*tan(22.5 deg) - r) / sqrt2`` in front of the corner
+    (measured along the bisector, into the table); the ball falls once its
+    center is ``corridor`` past that point.  The capture circle is centered
+    ``depth`` behind the corner, so its near edge sits at ``radius - depth``.
+    """
+    s2 = np.sqrt(2.0)
+    corridor_start = (width / s2 + jaw_radius * np.tan(np.pi / 8) - jaw_radius) / s2
+    fall_line = corridor_start - corridor
+    return float(capture_radius - fall_line)
+
+
 TABLE_KWARGS = dict(
     l=3.56,
     w=1.78,
     cushion_width=0.055,
     cushion_height=0.0428,  # ~63% of the 68 mm ball
-    # Corner pockets: 72.5 mm mouth, 45° straight jaws, 8 mm rounded jaw horns
-    corner_pocket_width=0.0725,
+    # Corner pockets: 72.5 mm mouth, 45° straight jaws, 5 mm rounded noses,
+    # 5.5 mm corridor, then the ball falls (see module docstring)
+    corner_pocket_width=CORNER_POCKET_WIDTH,
     corner_pocket_angle=0.0,
-    corner_pocket_depth=0.045,
-    corner_pocket_radius=0.055,  # must exceed corner_pocket_depth (see module docstring)
-    corner_jaw_radius=0.008,
-    # Side pockets: 82.0 mm mouth, 14 mm rounded jaw horns, 5° splay
+    corner_pocket_depth=_corner_fall_depth(),   # ~31 mm
+    corner_pocket_radius=CORNER_CAPTURE_RADIUS,  # must exceed corner_pocket_depth
+    corner_jaw_radius=CORNER_JAW_RADIUS,
+    # Side pockets: 82.0 mm mouth, 11 mm rounded noses, 5° splay, fall line
+    # 5 mm in front of the nose line (radius - depth)
     side_pocket_width=0.082,
     side_pocket_angle=5.0,
-    side_pocket_depth=0.015,
-    side_pocket_radius=0.035,
-    side_jaw_radius=0.014,
+    side_pocket_depth=0.035,
+    side_pocket_radius=0.040,
+    side_jaw_radius=0.011,
     height=0.80,
 )
 

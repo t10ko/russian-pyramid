@@ -2,7 +2,7 @@
 
 A 3D visual training ground and physics workbench for **Russian Pyramid** (*Русский бильярд*), built to **train your eye on how to play billiards**.
 
-Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) balls** played into **72.5 mm corner pockets** with straight jaws. Along the corner bisector, the pocket accepts barely **±0.1° of directional error**. Developing a reliable eye for cut angles, off-center cue alignment, spin-induced throw, and cue-ball carom trajectories (*svoyaks* / *свояки*) requires seeing the same geometry over and over until the sight picture clicks.
+Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) balls** played into **72.5 mm corner pockets** with straight jaws. A straight-in corner pot forgives only about **±5 mm** at the mouth — on a 1 m + 1 m shot that is roughly **±0.02° of cue direction**. Developing a reliable eye for cut angles, off-center cue alignment, spin-induced throw, and cue-ball carom trajectories (*svoyaks* / *свояки*) requires seeing the same geometry over and over until the sight picture clicks.
 
 > **Scope & Philosophy:** This project is **not** meant to cover every extreme trick shot, jump shot, or exotic edge case, nor is it a full match game with rules or AI opponents. Instead, it accurately models **the vast majority of practical, real-world shots** you actually face at the table — giving you a fast, distraction-free **aim → shoot → replay → repeat** loop to calibrate your vision and stroke parameters.
 
@@ -32,7 +32,7 @@ Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) ball
 
 ### 3D Practice Workbench & Off-Center Sighting
 ![Russian Pyramid 3D Test Ground](assets/preview.png)
-*Interactive 3D view: moving the tip contact point on the spin pad shifts the cue stick and its collinear dashed aiming line in parallel across the cue ball, matching how you line up side spin in real life.*
+*Interactive 3D view: moving the tip contact point on the spin pad shifts the cue stick and its collinear aiming line in parallel across the cue ball, matching how you line up side spin in real life.*
 
 <br/>
 
@@ -58,7 +58,9 @@ Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) ball
 
 - **Eye-Training Sighting & Cue Geometry**:
   - **Parallel Off-Center Cue Shift**: Adjusting horizontal/vertical spin (`a`, `b`) on the spin pad translates the 3D cue stick in parallel across the cue ball's face.
-  - **Collinear Sightline**: The dashed aiming line stays strictly collinear with the cue shaft so you see where the cue tip is actually pointing, while the physics engine accounts for off-center squirt, swerve, and collision throw.
+  - **Collinear Sightline**: The solid yellow aiming line stays strictly collinear with the cue shaft so you see where the cue tip is actually pointing, while the physics engine accounts for off-center squirt, swerve, and collision throw. It ends in a translucent ghost ball (where the cue ball will be at contact) with a red dot on the exact contact point of the object ball.
+  - **Target Ball Path (`T`)**: Optional cyan preview of where the first ball the cue ball *physically* touches will go — simulated with the real physics (squirt, swerve, throw, spin, cushions, jaws), ending in a green ring if it drops. The ghost ball and contact dot follow that real first contact.
+  - **Cue Ball Path (`Y`)**: Pink preview of the cue ball's own path — svoyaks, follow/draw, and squirt at a glance. Both previews refresh live while you aim.
   - **Animated Cue Stroke**: Smooth pullback, acceleration, and follow-through on both live shots and replays.
   - **Direct Target Aiming (`Shift + Click / Drag`)**: Hold <kbd>Shift</kbd> and click (or drag) where you want to hit on the target ball or cloth — the cue's sightline snaps immediately to that target point, matching how you pick a contact point in real life.
 - **Free-Roaming 3D Camera System**:
@@ -75,7 +77,8 @@ Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) ball
   - 68 mm / 285 g tournament balls.
   - Sliding, rolling, and spinning transitions on cloth.
   - Follow, draw, side english, elevated-cue swerve/massé, and cut-induced throw.
-  - True jaw rattle, lip bounce, and pocket drop trajectories.
+  - True jaw rattle and lip bounce; regulation pocket fall lines (5.5 mm corner corridor, R1 = 5 mm / R2 = 11 mm noses).
+  - Physical pot drop: the ball tips over the slate edge, falls under gravity, and hard pots slam into the back of the pocket before settling in the net.
 - **Dedicated Practice & Playback Modes**:
   - **Aim Mode**: Configure spin, power, and cue elevation, then shoot (<kbd>Space</kbd>).
   - **Playback Mode**: Click any logged attempt, press <kbd>P</kbd>, or use the playback controls to enter persistent **Playback** mode. The Shot panel locks and displays the exact parameters of that attempt while you scrub through time or adjust playback speed (`0.25×` – `2×`).
@@ -84,7 +87,17 @@ Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) ball
 
 ---
 
-## Quickstart
+## Install on macOS
+
+1. Open the [latest GitHub release](https://github.com/t10ko/russian-pyramid/releases/latest) and download the disk image for your Mac.
+   - **Apple Silicon** (M-series chip) — `russian-pyramid-arm64.dmg`
+   - **Intel** — `russian-pyramid-x86_64.dmg`
+2. Open the disk image and drag **Russian Pyramid** into **Applications**.
+3. Launch **Russian Pyramid** from Applications or Spotlight. The practice table runs in its own window and works offline.
+
+The disk images are distributed without Apple notarization. If macOS blocks the first launch, see [Apple’s instructions for opening an app you trust](https://support.apple.com/en-us/102445).
+
+## Quickstart from source
 
 ```bash
 make setup    # Set up Python virtual environment and dependencies
@@ -120,11 +133,14 @@ make start
 
 #### macOS App Bundle
 
-You can also build a native standalone `.app`:
+Build **Russian Pyramid.app** on macOS with `uv` and the Xcode command line tools.
 
 ```bash
 packaging/build_macos.sh
+packaging/package_macos.sh
 ```
+
+The app and disk image are saved in `packaging/dist`.
 
 ---
 

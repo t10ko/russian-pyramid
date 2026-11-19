@@ -51,7 +51,7 @@ path = "src/russian_pyramid/_version.py"
 packages = ["src/russian_pyramid"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "examples", "packaging", "scripts", "README.md", "LICENSE"]
+include = ["src", "tests", "examples", "packaging", "scripts", "assets/icon.icns", "README.md", "LICENSE"]
 
 [tool.ruff]
 line-length = 100

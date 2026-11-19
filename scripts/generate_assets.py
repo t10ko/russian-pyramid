@@ -2,17 +2,13 @@
 
     uv run python scripts/generate_assets.py
 
-Draws a stylized top-down render of the practice table (same visual language
-as the canvas UI) with Pillow, then converts a simplified mark into .icns via
-iconutil on macOS.
+Draws a stylized top-down render of the practice table and a multi-resolution
+macOS icon with Pillow.
 """
 
 from __future__ import annotations
 
 import math
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -177,38 +173,46 @@ def ball(draw, pt, m, x, y, cue=False, number=None):
 def draw_icon():
     """App icon: three pyramid balls on green felt."""
     size = 1024
-    img = Image.new("RGB", (size, size), (13, 110, 72))
-    d = ImageDraw.Draw(img)
-    # felt vignette
-    for i in range(60):
-        f = i / 60
-        shade = mix((20, 140, 92), (8, 70, 46), f)
-        d.ellipse([size * 0.05 + size * 0.45 * f, size * 0.05 + size * 0.45 * f,
-                   size * 0.95 - size * 0.45 * f, size * 0.95 - size * 0.45 * f],
-                  outline=shade, width=12)
+    dimensions = (size, size)
+    tile = (73, 65, 951, 943)
+    mask = Image.new("L", dimensions)
+    ImageDraw.Draw(mask).rounded_rectangle(tile, radius=192, fill=255)
+    shade = Image.linear_gradient("L").resize(dimensions)
+    img = Image.composite(Image.new("RGB", dimensions, "#063425"),
+                          Image.new("RGB", dimensions, "#20956d"), shade).convert("RGBA")
+    ImageDraw.Draw(img).rounded_rectangle(tile, radius=192, outline="#2d9c75", width=4)
+    img.putalpha(mask)
 
-    def icon_ball(cx, cy, r, cue):
-        d.ellipse([cx - r, cy - r, cx + r, cy + r],
-                  fill=(242, 201, 76) if cue else (247, 242, 230),
-                  outline=(160, 120, 30) if cue else (170, 162, 140), width=6)
+    radius = 152
+    balls = [(512, 328), (348, 612), (676, 612)]
+    shadows = Image.new("RGBA", dimensions)
+    shadow_draw = ImageDraw.Draw(shadows)
+    for x, y in balls:
+        shadow_draw.ellipse((x - 131, y + 68, x + 156, y + 178), fill=(0, 21, 16, 220))
+    img.alpha_composite(shadows.filter(ImageFilter.GaussianBlur(21)))
 
-    icon_ball(size * 0.5, size * 0.33, size * 0.23, cue=True)
-    icon_ball(size * 0.30, size * 0.68, size * 0.23, cue=False)
-    icon_ball(size * 0.70, size * 0.68, size * 0.23, cue=False)
+    diameter = 2 * radius + 1
+    lighting = Image.new("L", (diameter, diameter))
+    values = []
+    for py in range(-radius, radius + 1):
+        for px in range(-radius, radius + 1):
+            x, y = px / radius, py / radius
+            z = math.sqrt(max(0, 1 - x * x - y * y))
+            diffuse = max(0, -0.32 * x - 0.48 * y + 0.82 * z)
+            highlight = max(0, -0.16 * x - 0.25 * y + 0.95 * z) ** 32
+            values.append(round(255 * min(1, 0.20 + 0.72 * diffuse + 0.18 * highlight)))
+    lighting.putdata(values)
+    ball_mask = Image.new("L", lighting.size)
+    ImageDraw.Draw(ball_mask).ellipse((0, 0, diameter - 1, diameter - 1), fill=255)
+    colors = [("#fff2a4", "#b85b08"), ("#fffdef", "#a09879"), ("#fffdef", "#a09879")]
+    for (x, y), (light, dark) in zip(balls, colors, strict=True):
+        ball = Image.composite(Image.new("RGB", lighting.size, light),
+                               Image.new("RGB", lighting.size, dark), lighting)
+        ball.putalpha(ball_mask)
+        img.alpha_composite(ball, (x - radius, y - radius))
 
-    iconset = Path(tempfile.mkdtemp()) / "icon.iconset"
-    iconset.mkdir()
-    for px in (16, 32, 64, 128, 256, 512):
-        img.resize((px, px), Image.LANCZOS).save(iconset / f"icon_{px}x{px}.png")
-        img.resize((px * 2, px * 2), Image.LANCZOS).save(iconset / f"icon_{px}x{px}@2x.png")
-
-    if shutil.which("iconutil"):
-        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o",
-                        str(ASSETS / "icon.icns")], check=True)
-        print("wrote", ASSETS / "icon.icns")
-    else:
-        img.save(ASSETS / "icon.png")
-        print("iconutil not found; wrote", ASSETS / "icon.png")
+    img.save(ASSETS / "icon.icns")
+    print("wrote", ASSETS / "icon.icns")
 
 
 if __name__ == "__main__":

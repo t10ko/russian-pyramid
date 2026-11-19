@@ -2,24 +2,40 @@
 // drops, and the scrubber.  Everything is driven by a sim-time cursor so
 // scrubbing backwards is exact.
 //
-// Pot animation: pooltool teleports a potted ball to the pocket center at
-// the capture event, which reads as "the ball disappears".  Instead we
-// animate phase A "roll into the hole" from the last free-rolling position
-// to the pocket center, then phase B "sink" (3D: drop below the cloth and
-// let the cloth occlude it; 2D: shrink and fade).
+// Pot animation: pooltool captures a ball the instant its center crosses the
+// pocket's fall line and teleports it to the pocket center, which reads as
+// "the ball disappears".  Instead, each potted ball gets a small physical
+// drop simulation seeded with its exact capture position and velocity (sent
+// by the server with the pocket event): it rolls to the slate edge, tips over
+// it (rolling-over-an-edge dynamics), falls under gravity, slams into the
+// leather back of the pocket if it came in hot, and settles in the basket.
+// A soft roll-in creeps over the lip and drops almost straight down; a hard
+// pot leaves the edge ballistically and hits the back wall within ~20 ms.
 
 import { sampleFrames } from './geometry.js';
 
-const ROLL_SPEED = 0.45;   // m/s while rolling into the hole (phase A)
-const ROLL_MAX = 0.35;     // s cap
-const SINK_TIME = 0.35;    // s to drop below the cloth (phase B)
-const SINK_DEPTH = -0.09;  // m, fully under the cloth
 const STROKE_TIME = 0.09;  // s of pre-impact cue wind-up + forward stroke
 const FOLLOW_TIME = 0.14;  // s of post-impact cue follow-through
 const DEFAULT_BALL_R = 0.034;
 
+// --- pot-drop physics -------------------------------------------------------
+const G = 9.81;
+const DROP_DT = 1 / 600;     // integration step (s)
+const DROP_SAMPLE = 4;       // keep every 4th step -> 150 Hz samples
+const DROP_MAX_T = 2.5;      // s safety cap
+const MIN_LIP_SPEED = 0.10;  // m/s: the cloth bevel (скат) tips even a creeping ball in
+const BACK_E = 0.15;         // restitution off the leather apron at the back of the pocket
+const APRON_DOWN = 0.25;     // share of impact speed the inclined apron turns downward
+const WALL_E = 0.30;         // restitution off the side walls of the throat / basket
+const EDGE_E = 0.25;         // restitution off the front face of the hole (slate edge)
+const NET_E = 0.18;          // restitution off the net / basket floor
+const NET_DAMP = 7.0;        // 1/s horizontal damping while lying in the net
+const STACK_RISE = 0.8;      // fraction of R a ball rests higher per ball below it
 export class Playback {
   constructor() {
+    this.dropSpecs = null;   // pocket id -> pocketDropSpecs() entry (set by main.js)
+    this.ballR = DEFAULT_BALL_R;
+    this.drops = {};         // ball_id -> precomputed pot-drop trajectory
     this.frames = null;      // ball_id -> {t, xyz, w?}
     this.quats = {};         // ball_id -> {t, q: [[qx, qy, qz, qw], ...]}
     this.events = [];
@@ -39,14 +55,15 @@ export class Playback {
     this.events = shot.events || [];
     this.pottedEvents = this.events.filter((e) => e.type === 'pocket');
     this.frames = this._cleanFrames(shot.frames, this.pottedEvents);
+    this.drops = this._buildDrops(this.frames, this.pottedEvents);
     const cueId = shot.cue_ball_id || shot.state?.cue_ball_id || 'cue';
     const startXYZ = this.frames?.[cueId]?.xyz?.[0] || this.frames?.cue?.xyz?.[0] || null;
     const cueParams = shot.attempt?.params || shot.state?.aim || null;
     this.shotCue = (startXYZ && cueParams)
       ? { xy: [startXYZ[0], startXYZ[1]], params: cueParams, cueBallId: cueId }
       : null;
-    const lastPotEnd = this.pottedEvents.reduce(
-      (m, e) => Math.max(m, e.t + ROLL_MAX + SINK_TIME),
+    const lastPotEnd = Object.values(this.drops).reduce(
+      (m, d) => Math.max(m, d.t0 + d.settleT + 0.15),
       0,
     );
     this.duration = Math.max(shot.duration || 0, lastPotEnd);
@@ -111,6 +128,7 @@ export class Playback {
 
   clear() {
     this.frames = null;
+    this.drops = {};
     this.quats = {};
     this.playing = false;
     this.trailPts = {};
@@ -224,8 +242,71 @@ export class Playback {
   }
 
   isSinking(id) {
-    const pot = this.pottedEvents.find((e) => e.balls.includes(id));
-    return pot ? this.time > pot.t + ROLL_MAX : false;
+    const drop = this.drops[id];
+    return drop ? this.time > drop.t0 : false;
+  }
+
+  // ---------- pot drop -------------------------------------------------------
+
+  _buildDrops(frames, pottedEvents) {
+    const out = {};
+    if (!frames) return out;
+    const perPocket = {};
+    for (const e of pottedEvents) {
+      for (const id of e.balls) {
+        const f = frames[id];
+        if (!f?.t?.length) continue;
+        const entry = this._entryState(e, f);
+        const spec = (e.pocket && this.dropSpecs?.[e.pocket]) ||
+          nearestDropSpec(this.dropSpecs, entry.xy);
+        const key = spec?.id ?? e.pocket ?? 'pocket';
+        const stack = perPocket[key] = (perPocket[key] ?? -1) + 1;
+        out[id] = {
+          t0: e.t,
+          ...simulateDrop(entry, spec, this.ballR || DEFAULT_BALL_R, stack),
+        };
+      }
+    }
+    return out;
+  }
+
+  // Capture position + velocity: exact values from the server's pocket event,
+  // else estimated from the last two free-rolling frames.
+  _entryState(e, f) {
+    const n = f.t.length;
+    const last = f.xyz[n - 1];
+    let xy = e.xy ? [e.xy[0], e.xy[1]] : [last[0], last[1]];
+    let vel = e.vel ? [e.vel[0], e.vel[1]] : null;
+    if (!vel) {
+      vel = [0, 0];
+      if (n >= 2) {
+        const dt = f.t[n - 1] - f.t[n - 2];
+        if (dt > 1e-6) {
+          vel = [(last[0] - f.xyz[n - 2][0]) / dt, (last[1] - f.xyz[n - 2][1]) / dt];
+        }
+      }
+    }
+    return { xy, vel };
+  }
+
+  // Pose of a potted ball `age` seconds after capture: {xyz, dq} where dq is
+  // the extra rotation accumulated since capture.
+  _dropPose(drop, age) {
+    const ts = drop.t;
+    const n = ts.length;
+    if (age >= ts[n - 1]) return { xyz: drop.p[n - 1], dq: drop.q[n - 1] };
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (ts[mid] <= age) lo = mid; else hi = mid;
+    }
+    const span = ts[hi] - ts[lo];
+    const f = span > 1e-9 ? (age - ts[lo]) / span : 0;
+    const a = drop.p[lo], b = drop.p[hi];
+    return {
+      xyz: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f],
+      dq: f < 0.5 ? drop.q[lo] : drop.q[hi],
+    };
   }
 
   rebuildTrails() {
@@ -241,12 +322,12 @@ export class Playback {
     }
   }
 
-  // Balls for the renderer at the current time.  pocketById maps id ->
-  // {center, radius}; drop2D=true makes sinking shrink+fade (2D top-down)
-  // instead of sinking below the cloth (3D).
+  // Balls for the renderer at the current time.  drop2D=true makes a potted
+  // ball shrink+fade as it falls (2D top-down) instead of dropping below the
+  // cloth (3D), where it stays visible lying in the basket.
   // Iterates over `this.frames` (not `ballsStatic`, which comes from the
   // post-shot server state and already omits potted balls).
-  visualBalls(ballsStatic, pocketById, drop2D) {
+  visualBalls(ballsStatic, drop2D) {
     const positions = this.positionsAt(this.time);
     const staticById = new Map(ballsStatic.map((b) => [b.id, b]));
     const cueId = ballsStatic.find((b) => b.isCue)?.id || 'cue';
@@ -266,43 +347,194 @@ export class Playback {
       const r = base.radius || DEFAULT_BALL_R;
       let quat = sampleQuat(this.quats[id], this.time);
 
-      const pot = this.pottedEvents.find((e) => e.balls.includes(id));
-      if (pot) {
-        const age = this.time - pot.t;
-        if (age < 0) {
-          // not yet potted: but pooltool snaps the position at pot.t; if we
-          // are before the event the frames are still free-rolling -- fine.
-        } else {
-          const pocket = nearestPocket(pocketById, xy);
-          const from = sampleFrames(this.frames[id], Math.max(0, pot.t - 1e-4)) || xy;
-          const dx = pocket[0] - from[0], dy = pocket[1] - from[1];
-          const dist = Math.hypot(dx, dy);
-          const rollDur = Math.min(ROLL_MAX, dist / ROLL_SPEED);
-          if (age < rollDur) {
-            // phase A: keep rolling into the hole
-            const f = rollDur > 0 ? age / rollDur : 1;
-            xy = [from[0] + dx * f, from[1] + dy * f];
-            z = from[2] ?? z;
-            quat = quatMul(quatFromRotVec((dy * f) / r, 0, -(dx * f) / r), quat);
-          } else {
-            // phase B: sink
-            const f = Math.min(1, (age - rollDur) / SINK_TIME);
-            xy = [pocket[0], pocket[1]];
-            quat = quatMul(quatFromRotVec(dy / r, 0, -dx / r), quat);
-            if (drop2D) {
-              scale = 1 - 0.6 * f;
-              alpha = 1 - f;
-            } else {
-              z = (from[2] ?? 0) + (SINK_DEPTH - (from[2] ?? 0)) * f;
-            }
-            if (f >= 1) hidden = true;
-          }
+      const drop = this.drops[id];
+      if (drop && this.time >= drop.t0) {
+        const pose = this._dropPose(drop, this.time - drop.t0);
+        xy = [pose.xyz[0], pose.xyz[1]];
+        z = pose.xyz[2];
+        quat = quatMul(pose.dq, sampleQuat(this.quats[id], drop.t0));
+        if (drop2D) {
+          // fully gone once the top of the ball is below the cloth
+          const f = Math.max(0, Math.min(1, (r - z) / (2 * r)));
+          z = r;
+          scale = 1 - 0.6 * f;
+          alpha = 1 - f;
+          if (f >= 1) hidden = true;
         }
       }
       out.push({ ...base, xy, z, quat, scale, alpha, hidden });
     }
     return out;
   }
+}
+
+// Drop of a captured ball into its pocket, in the pocket's local frame
+// (s along the axis outward, t across, z up from the cloth).
+//   roll   -- on the slate until the contact point reaches the fall edge
+//   pivot  -- rolls over the edge: (7/5) m R^2 θ'' = m g R sin θ, leaving
+//             the edge when the normal force vanishes (R θ'^2 >= g cos θ)
+//   fly    -- free fall; dead bounces off the leather back (which also
+//             deflects it downward), side walls, the front face of the
+//             hole, and the net floor, then settles in the net
+// Returns {t: [s], p: [[x, y, z]], q: [quat], settleT}.
+function simulateDrop(entry, spec, R, stack = 0) {
+  const P = entry.xy;
+  const V = entry.vel;
+  if (!spec) {
+    // no pocket geometry (shouldn't happen): straight drop on the spot
+    spec = {
+      origin: P, u: unit(V, [1, 0]), v: [-unit(V, [1, 0])[1], unit(V, [1, 0])[0]],
+      sLip: 0, sBack: 0.09, halfWidth: R + 0.004, floor: -0.115,
+    };
+  }
+  const { origin: O, u, v } = spec;
+  const sBackC = spec.sBack - R;                     // max s of the ball center
+  const tMax = Math.max(0.0005, spec.halfWidth - R); // max |t| of the ball center
+  const floorZ = spec.floor + R + stack * STACK_RISE * R;
+  const kPivot = (5 * G) / (7 * R);
+
+  let s = (P[0] - O[0]) * u[0] + (P[1] - O[1]) * u[1];
+  let t = (P[0] - O[0]) * v[0] + (P[1] - O[1]) * v[1];
+  let z = R;
+  let vs = V[0] * u[0] + V[1] * u[1];
+  let vt = V[0] * v[0] + V[1] * v[1];
+  let vz = 0;
+  if (vs < MIN_LIP_SPEED) vs = MIN_LIP_SPEED;
+  const sLip = Math.min(spec.sLip, sBackC - 0.002);
+  t = Math.max(-tMax, Math.min(tMax, t));
+
+  let phase = s >= sLip ? 'pivot' : 'roll';
+  let theta = 0, thetaDot = vs / R;
+  if (phase === 'pivot') {
+    // already past the edge at capture: start the pivot from the current lean
+    theta = Math.asin(Math.max(0, Math.min(0.95, (s - sLip) / R)));
+    z = R * Math.cos(theta);
+  }
+  // rolling-speed vector (table frame) that drives the visual spin
+  let spinS = vs, spinT = vt;
+  let q = [0, 0, 0, 1];
+  let settled = false, settleT = DROP_MAX_T, restTimer = 0;
+
+  const tsOut = [], pOut = [], qOut = [];
+  const emit = (time) => {
+    tsOut.push(time);
+    pOut.push([
+      O[0] + u[0] * s + v[0] * t,
+      O[1] + u[1] * s + v[1] * t,
+      z,
+    ]);
+    qOut.push(q);
+  };
+  emit(0);
+
+  let time = 0;
+  for (let step = 1; time < DROP_MAX_T && !settled; step++) {
+    const dt = DROP_DT;
+    time += dt;
+
+    if (phase === 'roll') {
+      s += vs * dt;
+      t += vt * dt;
+      if (s >= sLip) {
+        phase = 'pivot';
+        theta = 0;
+        thetaDot = vs / R;
+      }
+    } else if (phase === 'pivot') {
+      if (R * thetaDot * thetaDot >= G * Math.cos(theta) || theta > 1.4) {
+        // leaves the edge: hand the pivot motion over to free flight
+        phase = 'fly';
+        vs = R * thetaDot * Math.cos(theta);
+        vz = -R * thetaDot * Math.sin(theta);
+      } else {
+        thetaDot += kPivot * Math.sin(theta) * dt;
+        theta += thetaDot * dt;
+        s = sLip + R * Math.sin(theta);
+        z = R * Math.cos(theta);
+        t += vt * dt;
+        spinS = R * thetaDot;
+      }
+    }
+
+    if (phase === 'fly' || phase === 'net') {
+      if (phase === 'fly') vz -= G * dt;
+      s += vs * dt;
+      t += vt * dt;
+      z += vz * dt;
+
+      // leather back of the pocket: dead, and its incline sends the ball down
+      if (s > sBackC) {
+        s = sBackC;
+        if (vs > 0) {
+          vz -= APRON_DOWN * vs;
+          vs = -vs * BACK_E;
+          vt *= 0.6;
+          spinS *= 0.3; spinT *= 0.5;
+        }
+      }
+      // side walls of the throat / basket
+      if (Math.abs(t) > tMax) {
+        t = Math.sign(t) * tMax;
+        if (vt * t > 0) vt = -vt * WALL_E;
+        spinT *= 0.4;
+      }
+      // front face of the hole: a rebound off the back can't climb out
+      if (vs < 0 && s - sLip < R) {
+        s = sLip + R;
+        vs = -vs * EDGE_E;
+        spinS *= 0.5;
+      }
+      // net / basket floor
+      if (z <= floorZ) {
+        z = floorZ;
+        if (vz < -0.25) {
+          vz = -vz * NET_E;
+          vs *= 0.55; vt *= 0.55;
+          spinS *= 0.5; spinT *= 0.5;
+        } else {
+          vz = 0;
+          phase = 'net';
+        }
+      }
+      if (phase === 'net') {
+        const damp = Math.exp(-NET_DAMP * dt);
+        vs *= damp; vt *= damp;
+        spinS = vs; spinT = vt;
+        if (Math.hypot(vs, vt) < 0.01) {
+          restTimer += dt;
+          if (restTimer > 0.05) { settled = true; settleT = time; }
+        }
+      }
+    } else if (phase === 'roll') {
+      spinS = vs; spinT = vt;
+    }
+
+    // spin: rolling-speed vector -> world rotation (same mapping as the
+    // shot frames: table (x, y) displacement -> rot vec (dy/R, 0, -dx/R))
+    const wx = spinS * u[0] + spinT * v[0];
+    const wy = spinS * u[1] + spinT * v[1];
+    if (wx !== 0 || wy !== 0) {
+      q = quatMul(quatFromRotVec((wy * dt) / R, 0, -(wx * dt) / R), q);
+    }
+    if (step % DROP_SAMPLE === 0 || settled) emit(time);
+  }
+  if (!settled) settleT = time;
+  return { t: tsOut, p: pOut, q: qOut, settleT };
+}
+
+function unit(vec, fallback) {
+  const n = Math.hypot(vec[0], vec[1]);
+  return n > 1e-9 ? [vec[0] / n, vec[1] / n] : fallback;
+}
+
+function nearestDropSpec(specs, xy) {
+  if (!specs) return null;
+  let best = null, bestD = Infinity;
+  for (const sp of Object.values(specs)) {
+    const d = Math.hypot(sp.origin[0] - xy[0], sp.origin[1] - xy[1]);
+    if (d < bestD) { bestD = d; best = sp; }
+  }
+  return best;
 }
 
 function quatFromRotVec(rx, ry, rz) {
@@ -348,13 +580,4 @@ function sampleQuat(qframes, t) {
   const w = a[3] + (bw - a[3]) * f;
   const norm = Math.hypot(x, y, z, w) || 1;
   return [x / norm, y / norm, z / norm, w / norm];
-}
-
-function nearestPocket(pocketById, pos) {
-  let best = null, bestD = Infinity;
-  for (const p of Object.values(pocketById)) {
-    const d = Math.hypot(p.center[0] - pos[0], p.center[1] - pos[1]);
-    if (d < bestD) { bestD = d; best = p.center; }
-  }
-  return best || pos;
 }

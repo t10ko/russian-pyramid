@@ -5,7 +5,7 @@
 // scripts/ui_smoke.mjs (Node has no WebGL); browsers always render in 3D.
 
 import { api } from './api.js';
-import { View } from './geometry.js';
+import { View, pocketDropSpecs } from './geometry.js';
 import { Renderer } from './render.js';
 import { Renderer3D } from './render3d.js';
 import { Aim, SpinPad, MAX_SPIN_R, V0_MIN, V0_MAX, v0ToPercent, percentToV0, formatShotPower } from './aim.js';
@@ -32,6 +32,15 @@ class App {
     this.focusBallId = 'cue';
     this.cueBallId = 'cue';
     this._framed = false;
+
+    // Physics aim preview (first ball actually touched, its path, the cue
+    // ball's path).  Toggles: T = target-ball path, Y = cue-ball path.
+    this.showTargetPath = loadPref('rp.targetPath', false);
+    this.showCuePath = loadPref('rp.cuePath', true);
+    this.pred = null;                // last server prediction {key, layoutKey, ...}
+    this._predWantKey = null;        // key of the current aim/layout
+    this._predSentKey = null;        // key of the last request sent
+    this._predInflight = false;
 
     // headless-test path only; browsers are always 3D
     this.viewMode = globalThis.__RP_FORCE_2D__ ? '2d' : '3d';
@@ -79,12 +88,6 @@ class App {
       (this.playback.playing || this._scrubbing || this.playback.time < this.playback.duration - 1e-3);
   }
 
-  pocketById() {
-    const map = {};
-    for (const p of this.table.pockets) map[p.id] = p;
-    return map;
-  }
-
   staticBalls() {
     const balls = this.state.balls.map((b) => ({
       id: b.id,
@@ -115,6 +118,8 @@ class App {
     this.aim = new Aim(this.table, this.ballRadius);
     this.aim.phi = this.state.aim.phi;
     this.aim.V0 = this.state.aim.V0;
+    this.playback.dropSpecs = pocketDropSpecs(this.table);
+    this.playback.ballR = this.ballRadius;
 
     this.spinPad = new SpinPad($('spin-pad'), (a, b) => this.setAim({ a, b }));
     this.spinPad.set(this.state.aim.a, this.state.aim.b);
@@ -237,6 +242,85 @@ class App {
         this.setAim({ a: +btn.dataset.a, b: +btn.dataset.b });
       });
     });
+
+    $('target-path').checked = this.showTargetPath;
+    $('target-path').addEventListener('change', (e) => this.setTargetPath(e.target.checked));
+    $('cue-path').checked = this.showCuePath;
+    $('cue-path').addEventListener('change', (e) => this.setCuePath(e.target.checked));
+  }
+
+  // ---------- physics aim preview ----------
+
+  setTargetPath(on) {
+    this.showTargetPath = !!on;
+    $('target-path').checked = this.showTargetPath;
+    savePref('rp.targetPath', this.showTargetPath);
+  }
+
+  setCuePath(on) {
+    this.showCuePath = !!on;
+    $('cue-path').checked = this.showCuePath;
+    savePref('rp.cuePath', this.showCuePath);
+  }
+
+  toggleTargetPath() {
+    this.setTargetPath(!this.showTargetPath);
+    toast(this.showTargetPath ? 'target-ball path on' : 'target-ball path off');
+  }
+
+  toggleCuePath() {
+    this.setCuePath(!this.showCuePath);
+    toast(this.showCuePath ? 'cue-ball path on' : 'cue-ball path off');
+  }
+
+  // Keep a physics prediction for the current aim.  Latest-wins: at most one
+  // request in flight; when it lands and the aim has moved on, the next frame
+  // sends the newest aim right away.  No debounce, so the preview refreshes
+  // as fast as the server simulates (a few ms for typical layouts).
+  updatePrediction(active) {
+    if (!active) return;
+    const layoutKey = JSON.stringify([this.cueBallId, this.state.balls.map((b) => [b.id, b.xy])]);
+    const params = this.aim.params();
+    const key = JSON.stringify([layoutKey, params]);
+    this._predWantKey = key;
+    if (this.pred && this.pred.layoutKey !== layoutKey) this.pred = null;
+    if (this._predInflight || key === this._predSentKey) return;
+    this._predSentKey = key;
+    this._predInflight = true;
+    api.predictTarget({ ...params, cue_ball_id: this.cueBallId })
+      .then((res) => {
+        const nowLayout = JSON.stringify([this.cueBallId, this.state.balls.map((b) => [b.id, b.xy])]);
+        if (nowLayout === layoutKey) this.pred = { key, layoutKey, ...res };
+      })
+      .catch(() => { /* best-effort: keep the last good prediction */ })
+      .finally(() => { this._predInflight = false; });
+  }
+
+  // Swap the straight-line ghost ball for the physical first contact
+  // (squirt / swerve can make the cue ball touch a different ball -- or none).
+  applyPhysicsContact(aim, pred) {
+    if (!pred) return aim;
+    const lineAt = (p) => {
+      const t = (p[0] - aim.lineOrigin[0]) * aim.dir[0] + (p[1] - aim.lineOrigin[1]) * aim.dir[1];
+      return [aim.lineOrigin[0] + aim.dir[0] * t, aim.lineOrigin[1] + aim.dir[1] * t];
+    };
+    if (pred.contact && pred.target) {
+      const ghost = pred.contact.cue;
+      const objXY = pred.contact.target;
+      const n = Math.hypot(objXY[0] - ghost[0], objXY[1] - ghost[1]) || 1;
+      return {
+        ...aim,
+        ghost,
+        objBall: { id: pred.target, xy: objXY },
+        objDir: [(objXY[0] - ghost[0]) / n, (objXY[1] - ghost[1]) / n],
+        lineEnd: lineAt(ghost),
+        physicsContact: true,
+      };
+    }
+    if (!pred.target) {
+      return { ...aim, ghost: null, objBall: null, objDir: null, lineEnd: aim.wallEnd, physicsContact: true };
+    }
+    return aim;
   }
 
   setCameraPreset(preset) {
@@ -252,7 +336,7 @@ class App {
     $('theta').value = this.aim.theta;
     $('v0-read').textContent = formatShotPower(this.aim.V0);
     $('theta-read').textContent = `${this.aim.theta}°`;
-    $('phi-read').textContent = `${this.aim.phi.toFixed(2)}°`;
+    $('phi-read').textContent = `${this.aim.phi.toFixed(3)}°`;
     document.querySelectorAll('.spin-presets button').forEach((btn) => {
       const match = Math.hypot(this.aim.a - +btn.dataset.a, this.aim.b - +btn.dataset.b) < 0.02;
       btn.classList.toggle('on', match);
@@ -757,20 +841,29 @@ class App {
     const playing = Boolean(inPlayback || liveRolling);
     let balls;
     if (playing && !this.dragPreview) {
-      balls = this.playback.visualBalls(this.staticBalls(), this.pocketById(),
-                                        this.viewMode === '2d');
+      balls = this.playback.visualBalls(this.staticBalls(), this.viewMode === '2d');
     } else {
       balls = this.staticBalls();
     }
     const cue = balls.find((b) => b.isCue && !b.hidden);
     let aim = null;
+    const aiming = !!cue && !playing && this.mode === 'aim' && !this.dragPreview;
+    this.updatePrediction(aiming);
+    const pred = aiming ? this.pred : null;
+    let targetPath = null, cuePath = null;
+    if (pred && this.showTargetPath && pred.target && pred.path?.xyz?.length > 1) {
+      targetPath = { key: pred.key, pts: pred.path.xyz, potted: pred.potted, id: pred.target };
+    }
+    if (pred && this.showCuePath && pred.cue?.path?.xyz?.length > 1) {
+      cuePath = { key: pred.key, pts: pred.cue.path.xyz, potted: pred.cue.potted };
+    }
     if (cue && !playing && this.mode === 'aim') {
-      aim = {
+      aim = this.applyPhysicsContact({
         ...this.aim.preview(cue.xy, this.staticBalls()),
         ...this.aim.params(),
         showLine: true,
         showSpin: true,
-      };
+      }, pred);
     } else if (playing && this.playback.shotCue) {
       const sc = this.playback.shotCue;
       aim = {
@@ -787,6 +880,8 @@ class App {
       playing,
       focus: this.computeFocus(balls),
       aim,
+      targetPath,
+      cuePath,
       trails: this.playback.trailPts,
       trailsOn: $('trails').checked && playing,
       ripples: this.ripples,
@@ -847,6 +942,19 @@ function nearestPocketCenter(p, app) {
     if (d < bestD) { bestD = d; best = pk.center; }
   }
   return best || p;
+}
+
+function loadPref(key, fallback) {
+  try {
+    const v = globalThis.localStorage?.getItem(key);
+    return v === null || v === undefined ? fallback : v === '1';
+  } catch {
+    return fallback;
+  }
+}
+
+function savePref(key, on) {
+  try { globalThis.localStorage?.setItem(key, on ? '1' : '0'); } catch { /* private mode */ }
 }
 
 const app = new App();

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Build the standalone macOS app + DMG payload.
+# Build the standalone macOS app.
 #
 #   packaging/build_macos.sh
 #
 # Produces packaging/dist/russian-pyramid/ and packaging/dist/Russian Pyramid.app
-# (DMG creation is a CI step; run `hdiutil create` locally if you want one).
+# Run packaging/package_macos.sh to make a distribution disk image.
 
 set -euo pipefail
 
@@ -14,12 +14,12 @@ cd "$ROOT"
 VENV="${BUILD_VENV:-$ROOT/packaging/.venv}"
 
 if [ ! -x "$VENV/bin/python" ]; then
-  uv venv "$VENV"
+  uv venv --python 3.12 "$VENV"
 fi
 
 uv pip install --python "$VENV/bin/python" -e ".[dev]" pyinstaller
 
-"$VENV/bin/pyinstaller" \
+"$VENV/bin/python" -m PyInstaller \
   --noconfirm \
   --clean \
   --distpath "$ROOT/packaging/dist" \
@@ -31,6 +31,7 @@ if [ ! -d "$APP" ]; then
   echo "bundle missing: $APP" >&2
   exit 1
 fi
+codesign --verify --deep --strict "$APP"
 
 echo
 echo "built: $APP"

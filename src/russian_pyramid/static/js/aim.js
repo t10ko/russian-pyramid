@@ -122,6 +122,7 @@ export class Aim {
 
     const endT = hit ? hit.dist : wallT;
     const lineEnd = [lineOrigin[0] + d[0] * endT, lineOrigin[1] + d[1] * endT];
+    const wallEnd = [lineOrigin[0] + d[0] * wallT, lineOrigin[1] + d[1] * wallT];
 
     let ghost = null, objDir = null, objBall = null;
     if (hit) {
@@ -142,6 +143,7 @@ export class Aim {
       lineOrigin,
       lineStart,
       lineEnd,
+      wallEnd,
       ghost,
       objDir,
       objBall,
