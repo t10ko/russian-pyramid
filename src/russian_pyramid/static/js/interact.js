@@ -83,7 +83,17 @@ export class Interact {
 
     window.addEventListener('keydown', (e) => this.key(e));
     window.addEventListener('keyup', (e) => this.keyUp(e));
-    window.addEventListener('blur', () => this.moveKeys.clear());
+    window.addEventListener('blur', () => this.resetInputState());
+    window.addEventListener('pagehide', () => this.resetInputState());
+    globalThis.document?.addEventListener?.('visibilitychange', () => {
+      if (globalThis.document.hidden) this.resetInputState();
+    });
+  }
+
+  resetInputState() {
+    this.moveKeys.clear();
+    this.cancel();
+    this.app.r3d?.cancelInteractions?.();
   }
 
   onCanvas(e) {
@@ -121,6 +131,8 @@ export class Interact {
   }
 
   down(e) {
+    // Clicking the canvas clears any stuck WASD keys from OS-intercepted shortcuts
+    this.moveKeys.clear();
     if (e.button === 2 || e.altKey) {
       this._rightDownAt = { x: e.clientX, y: e.clientY };
       return; // stationary right-click handled by contextmenu; right-drag pans camera
@@ -199,7 +211,8 @@ export class Interact {
       this.app.moveBall(id, xy);
     } else if (!this.moved && this._downAt && !e?.shiftKey && !e?.ctrlKey && !e?.metaKey) {
       const dist = Math.hypot(e.clientX - this._downAt.x, e.clientY - this._downAt.y);
-      if (dist < 7) {
+      // Ignore ball selection clicks while balls from a live shot are still rolling
+      if (dist < 7 && !this.app.isLiveShotRolling()) {
         const xy = this.tablePos(e);
         if (xy) {
           const ball = this.ballAt(xy);
@@ -226,7 +239,7 @@ export class Interact {
   }
 
   dbl(e) {
-    if (!this.onCanvas(e) || this.app.mode !== 'aim') return;
+    if (!this.onCanvas(e) || this.app.mode !== 'aim' || this.app.isLiveShotRolling()) return;
     const xy = this.tablePos(e);
     if (!xy) return;
     const ball = this.ballAt(xy);
@@ -234,6 +247,7 @@ export class Interact {
   }
 
   altClick(e) {
+    this.moveKeys.clear();
     const down = this._rightDownAt;
     this._rightDownAt = null;
     if (!this.onCanvas(e) || this.app.mode !== 'place') return;
@@ -265,18 +279,28 @@ export class Interact {
   }
 
   keyUp(e) {
+    // macOS swallows keyup for letter keys released while Command (Meta) is held
+    if (e.key === 'Meta' || e.key === 'Control' || e.code?.startsWith('Meta') || e.code?.startsWith('Control')) {
+      this.moveKeys.clear();
+      return;
+    }
     const mk = this._moveKeyFromEvent(e);
     if (mk) this.moveKeys.delete(mk);
   }
 
   key(e) {
+    // Clear held WASD keys whenever Command/Ctrl is pressed so macOS never strands a key
+    if (e.metaKey || e.ctrlKey || e.key === 'Meta' || e.key === 'Control') {
+      this.moveKeys.clear();
+      return;
+    }
     if (e.isComposing || isTextEntry(e.target)) return;
-    // Never hijack OS / browser modifier chords (e.g. Ctrl+Space layout switch, Cmd+R reload)
-    if (e.metaKey || e.ctrlKey) return;
 
     if (!e.altKey) {
       const mk = this._moveKeyFromEvent(e);
       if (mk) {
+        // Prevent macOS WKWebView press-and-hold accent popover from swallowing keyup
+        e.preventDefault?.();
         this.moveKeys.add(mk);
         return;
       }
@@ -284,6 +308,7 @@ export class Interact {
 
     const app = this.app;
     if ((e.code === 'Slash' && e.shiftKey) || e.key === '?' || e.key === '՞') {
+      this.moveKeys.clear();
       app.showHelp();
       return;
     }
@@ -310,6 +335,7 @@ export class Interact {
         else app.shoot();
         break;
       case 'escape':
+        this.moveKeys.clear();
         if (app.mode === 'playback') app.setMode('aim');
         break;
       case 'r':

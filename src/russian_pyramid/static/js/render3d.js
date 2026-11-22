@@ -64,7 +64,7 @@ export class Renderer3D {
     this.controls.mouseButtons = {
       LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN,
     };
-    this.controls.target.set(table.w / 2, Y0, table.l * 0.52);
+    this.controls.target.set(table.w / 2, Y0 + ballR, table.l * 0.52);
 
     this._lights(table);
     this._table(table);
@@ -79,14 +79,57 @@ export class Renderer3D {
     this._ballMeshes = new Map();
     this._textures = new Map();
     this._camGoal = null;
+    this.onPresetChange = null;
+    this._activePointers = new Set();
+
+    canvas.addEventListener('pointerdown', (e) => {
+      this._activePointers.add(e.pointerId);
+    }, { capture: true });
+    const untrack = (e) => { this._activePointers.delete(e.pointerId); };
+    canvas.addEventListener('pointerup', untrack, { capture: true });
+    canvas.addEventListener('pointercancel', untrack, { capture: true });
+    canvas.addEventListener('pointermove', (e) => {
+      // Guard against swallowed pointerup (contextmenu, OS gesture, window switch)
+      // leaving OrbitControls stuck rotating/panning with no button pressed.
+      if (this._activePointers.size > 0 && e.pointerType !== 'touch' && e.buttons === 0) {
+        this.cancelInteractions();
+      }
+    }, { capture: true });
+
     this.controls.addEventListener('start', () => { this._camGoal = null; });
+    this.controls.addEventListener('change', () => {
+      if (this.preset === 'top' && this.controls.getPolarAngle() > 0.15) {
+        this.preset = 'tv';
+        this.onPresetChange?.('tv');
+      }
+    });
     this.setCamera('tv');
+  }
+
+  // Cancel any in-flight OrbitControls drag and zero residual damping inertia.
+  cancelInteractions() {
+    if (typeof PointerEvent !== 'undefined') {
+      for (const id of [...this._activePointers]) {
+        this.canvas.dispatchEvent(new PointerEvent('pointercancel', { pointerId: id }));
+      }
+    }
+    this._activePointers.clear();
+    this._stopInertia();
+  }
+
+  _stopInertia() {
+    this.controls.saveState();
+    this.controls.reset();
   }
 
   // Enable/disable camera orbiting (main.js toggles it for Shift=cue mode
   // and while dragging balls).
   setInteractive(enabled) {
-    this.controls.enabled = !!enabled;
+    const next = !!enabled;
+    if (!next && this.controls.enabled && this._activePointers.size > 0) {
+      this.cancelInteractions();
+    }
+    this.controls.enabled = next;
   }
 
   // ---------- static scene ----------------------------------------------------
@@ -396,13 +439,15 @@ export class Renderer3D {
   setCamera(preset) {
     this.preset = preset;
     this._camGoal = null;
+    this._stopInertia();
     const { w, l } = this._dims;
     if (preset === 'top') {
       this.camera.position.set(w / 2 + 0.0001, Y0 + 3.6, l / 2);
-      this.controls.target.set(w / 2, Y0, l / 2);
+      this.controls.target.set(w / 2, Y0 + this.ballR, l / 2);
     } else {  // 'tv': over the shoulder of whatever ball is followed
       const tg = this.controls.target;
-      this.camera.position.set(tg.x + 0.02, tg.y + 1.55, tg.z - 1.05);
+      tg.y = Y0 + this.ballR;
+      this.camera.position.set(tg.x + 0.02, tg.y + 1.50, tg.z - 1.05);
     }
     this.controls.update();
   }
@@ -415,6 +460,7 @@ export class Renderer3D {
       this.setCamera('top');
       return;
     }
+    this._stopInertia();
     const target = new THREE.Vector3(x, ny, y);
     let pos;
     if (typeof phi === 'number') {
@@ -486,11 +532,13 @@ export class Renderer3D {
 
   _clampTargetToRoom() {
     if (!this._dims) return;
-    const pad = 0.85;
+    // Keep the orbit pivot right on the playing plane inside the outer wooden rails
+    // so rotating always pivots around the table spot at the center of the screen.
+    const pad = 0.14;
     const tg = this.controls.target;
     const clampedX = Math.max(-pad, Math.min(this._dims.w + pad, tg.x));
     const clampedZ = Math.max(-pad, Math.min(this._dims.l + pad, tg.z));
-    const clampedY = Math.max(Y0 - 0.02, Math.min(Y0 + 0.6, tg.y));
+    const clampedY = Y0 + this.ballR;
     const dx = clampedX - tg.x;
     const dy = clampedY - tg.y;
     const dz = clampedZ - tg.z;
@@ -534,6 +582,7 @@ export class Renderer3D {
     } else {
       this.focusRing.visible = false;
     }
+    if (!this._camGoal) this._clampTargetToRoom();
     this.controls.update();
     if (!this._camGoal) this._clampTargetToRoom();
     this.renderer.render(this.scene, this.camera);

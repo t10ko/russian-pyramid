@@ -180,6 +180,12 @@ class App {
     if (!this.r3d) {
       try {
         this.r3d = new Renderer3D($('table3d'), this.table, this.ballRadius);
+        this.r3d.onPresetChange = (preset) => {
+          this.cameraPreset = preset;
+          for (const btn of $('camera-toggle').querySelectorAll('button')) {
+            btn.classList.toggle('on', btn.dataset.cam === preset);
+          }
+        };
         this.r3d.setCamera(this.cameraPreset || 'tv');
         this.r3d.resize();
       } catch (err) {
@@ -735,6 +741,7 @@ class App {
   // ---------- camera focus & cue-ball selection ----------
 
   setFocusBall(id, { alignAim = false } = {}) {
+    if (this.isLiveShotRolling()) return;
     this._parkedCue = null;
     if (this.mode === 'playback') {
       this.setMode('aim');
@@ -764,6 +771,7 @@ class App {
   }
 
   focusCueBall({ alignAim = true } = {}) {
+    if (this.isLiveShotRolling()) return;
     if (this.mode === 'playback') {
       this.setMode('aim');
     }
@@ -862,7 +870,10 @@ class App {
     if (this.mode === 'playback') this.setMode('aim');
     else this.setMode(this.mode === 'aim' ? 'place' : 'aim');
   }
-  showHelp() { $('help').showModal(); }
+  showHelp() {
+    this.interact?.resetInputState?.();
+    $('help').showModal();
+  }
 
   // ---------- render loop ----------
 

@@ -89,19 +89,30 @@ Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) ball
 
 ## Install on macOS
 
-1. Open the [latest GitHub release](https://github.com/t10ko/russian-pyramid/releases/latest) and download the disk image for your Mac.
+### Option 1: Homebrew Cask *(Recommended — skips Gatekeeper prompt)*
+
+```bash
+brew tap t10ko/tap && brew trust t10ko/tap
+brew install --cask t10ko/tap/russian-pyramid
+```
+
+Installs **Russian Pyramid.app** into `/Applications`, links the `russian-pyramid` CLI into your `PATH`, and strips macOS quarantine automatically via [`t10ko/homebrew-tap`](https://github.com/t10ko/homebrew-tap). Upgrade anytime with `brew upgrade --cask russian-pyramid`.
+
+### Option 2: Direct `.dmg` Download
+
+1. Open the [latest GitHub release](https://github.com/t10ko/russian-pyramid/releases/latest) and download the disk image for your Mac:
    - **Apple Silicon** (M-series chip) — `russian-pyramid-arm64.dmg`
    - **Intel** — `russian-pyramid-x86_64.dmg`
 2. Open the disk image and drag **Russian Pyramid** into **Applications**.
 3. Launch **Russian Pyramid** from Applications or Spotlight. The practice table runs in its own window and works offline.
 
-The disk images are distributed without Apple notarization. If macOS Gatekeeper blocks a downloaded `.dmg` on first launch, either strip the browser quarantine attribute once:
+The disk images are distributed without Apple notarization. If macOS Gatekeeper blocks a browser-downloaded `.dmg` on first launch, either strip the quarantine attribute once:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Russian Pyramid.app"
 ```
 
-or use the **Open Anyway** button in *System Settings → Privacy & Security* ([Apple’s guide](https://support.apple.com/en-us/102445)). Building and installing locally via `make install-app` bypasses browser quarantine altogether.
+or use the **Open Anyway** button in *System Settings → Privacy & Security* ([Apple’s guide](https://support.apple.com/en-us/102445)). Building and installing locally via `make install-app` also bypasses browser quarantine altogether.
 
 ## Quickstart from source
 

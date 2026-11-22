@@ -304,6 +304,11 @@ const shootTipAfter = app.buildScene().aim?.stick?.tip;
 if (!shootTipAfter || Math.hypot(shootTipAfter[0] - shootTipStart[0], shootTipAfter[1] - shootTipStart[1]) < 0.02) {
   violations.push('cue stick did not animate forward when shooting');
 }
+// Regression: clicking / selecting a ball while live shot is still rolling must NOT abort animation
+app.setFocusBall('1');
+if (!app.isLiveShotRolling() || !app.playback.frames) {
+  violations.push('selecting a ball mid-roll aborted the live shot animation');
+}
 app.playback.speed = 2;
 let frames = 0;
 while ((app.playback.playing || app.playback.time < app.playback.duration) && frames < 2000) {
@@ -560,6 +565,22 @@ if (r3dTest.fxGroup) {
   await sleep(30);
   if (app.attemptShots.size !== shotsBefore || app.busy) {
     violations.push('Ctrl+Space (OS language switch) unexpectedly triggered shoot()');
+  }
+
+  // Regression: holding W then pressing Meta (macOS Command swallows keyup) must clear moveKeys
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: 'w', code: 'KeyW', shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+    target: { tagName: 'BODY' }, preventDefault() {},
+  });
+  if (!app.interact.moveKeys.has('w')) {
+    violations.push('WASD KeyW did not register in moveKeys');
+  }
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: 'Meta', code: 'MetaLeft', shiftKey: false, altKey: false, ctrlKey: false, metaKey: true,
+    target: { tagName: 'BODY' }, preventDefault() {},
+  });
+  if (app.interact.moveKeys.size !== 0) {
+    violations.push('pressing Command (Meta) did not clear held WASD moveKeys (causes runaway camera on macOS)');
   }
 }
 
