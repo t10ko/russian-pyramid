@@ -11,12 +11,167 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 
+import attrs
 import numpy as np
 import pooltool as pt
+import pooltool.constants as const
+import pooltool.ptmath as ptmath
 from pooltool.events import EventType
+from pooltool.evolution.event_based.simulate import DEFAULT_ENGINE
+from pooltool.objects.ball.datatypes import Ball, BallState
+from pooltool.objects.table.components import (
+    CircularCushionSegment,
+    Cushion,
+    LinearCushionSegment,
+)
+from pooltool.physics.engine import PhysicsEngine
+from pooltool.physics.resolve.ball_cushion.core import (
+    CoreBallCCushionCollision,
+    CoreBallLCushionCollision,
+)
+from pooltool.physics.resolve.models import BallCCushionModel, BallLCushionModel
+from pooltool.physics.resolve.stronge_compliant import (
+    resolve_collinear_compliant_frictional_inelastic_collision,
+)
 
 from russian_pyramid import config
+
+_RAIL_MIN_LEN = 0.20  # m: main rails are ~1.67 m; pocket jaw walls are 45-76 mm
+
+
+def _solve_compliant_cushion(
+    ball: Ball,
+    cushion: Cushion,
+    *,
+    e_base: float,
+    mu: float,
+    omega_ratio: float,
+    speed_drop: float = 0.0,
+    e_floor: float = 0.45,
+) -> tuple[Ball, Cushion]:
+    """Stronge-compliant ball-cushion collision with viscoelastic compression."""
+    rvw = ball.state.rvw.copy()
+    normal = cushion.get_normal_3d(ball.xyz)
+    rel_v = ptmath.surface_velocity(rvw, -normal, ball.params.R)
+    v_n_0, v_t_0, tangent = ptmath.decompose_normal_tangent(rel_v, normal, True)
+
+    impact_speed = abs(float(v_n_0))
+    e_eff = max(e_floor, e_base - speed_drop * max(0.0, impact_speed - 1.0))
+
+    beta_t = 3.5
+    beta_n = 1.0
+    v_t_f, v_n_f = resolve_collinear_compliant_frictional_inelastic_collision(
+        v_t_0=v_t_0,
+        v_n_0=v_n_0,
+        m=ball.params.m,
+        beta_t=beta_t,
+        beta_n=beta_n,
+        mu=mu,
+        e_n=e_eff,
+        k_n=1e3,
+        eta_squared=(beta_t / (beta_n * omega_ratio**2)),
+    )
+
+    dv_n = (v_n_f - v_n_0) / beta_n
+    dv_t = (v_t_f - v_t_0) / beta_t
+    rvw[1] += dv_n * normal + dv_t * tangent
+    rvw[2] += (2.5 / ball.params.R) * ptmath.cross(-normal, dv_t * tangent)
+    rvw[1][2] = 0.0
+    ball.state = BallState(rvw, const.sliding)
+    return ball, cushion
+
+
+@attrs.define
+class PyramidLinearCushion(CoreBallLCushionCollision):
+    """Separates lively rubber rails (> 20 cm) from softer pocket jaw walls."""
+
+    e_rail: float = 0.73
+    f_rail: float = 0.23
+    omega_rail: float = 1.58
+    rail_speed_drop: float = 0.018
+    e_jaw: float = 0.56
+    f_jaw: float = 0.16
+    omega_jaw: float = 1.38
+    model: BallLCushionModel = attrs.field(
+        default=BallLCushionModel.STRONGE_COMPLIANT, init=False, repr=False
+    )
+
+    def solve(
+        self, ball: Ball, cushion: LinearCushionSegment
+    ) -> tuple[Ball, LinearCushionSegment]:
+        seg_len = float(np.hypot(cushion.p2[0] - cushion.p1[0], cushion.p2[1] - cushion.p1[1]))
+        if seg_len > _RAIL_MIN_LEN:
+            out_ball, _ = _solve_compliant_cushion(
+                ball,
+                cushion,
+                e_base=self.e_rail,
+                mu=self.f_rail,
+                omega_ratio=self.omega_rail,
+                speed_drop=self.rail_speed_drop,
+                e_floor=0.58,
+            )
+            return out_ball, cushion
+        out_ball, _ = _solve_compliant_cushion(
+            ball,
+            cushion,
+            e_base=self.e_jaw,
+            mu=self.f_jaw,
+            omega_ratio=self.omega_jaw,
+        )
+        return out_ball, cushion
+
+
+@attrs.define
+class PyramidCircularCushion(CoreBallCCushionCollision):
+    """Soft, compliant rounded pocket jaw horns (губки луз)."""
+
+    e_jaw: float = 0.55
+    f_jaw: float = 0.16
+    omega_jaw: float = 1.38
+    model: BallCCushionModel = attrs.field(
+        default=BallCCushionModel.STRONGE_COMPLIANT, init=False, repr=False
+    )
+
+    def solve(
+        self, ball: Ball, cushion: CircularCushionSegment
+    ) -> tuple[Ball, CircularCushionSegment]:
+        out_ball, _ = _solve_compliant_cushion(
+            ball,
+            cushion,
+            e_base=self.e_jaw,
+            mu=self.f_jaw,
+            omega_ratio=self.omega_jaw,
+        )
+        return out_ball, cushion
+
+
+@lru_cache(maxsize=8)
+def physics_engine(physics_preset: str = config.DEFAULT_PHYSICS_PRESET) -> PhysicsEngine:
+    """Build (and cache) the split rail/jaw PhysicsEngine for a preset."""
+    preset = config.cushion_preset(physics_preset)
+    linear = PyramidLinearCushion(
+        e_rail=preset["e_c"],
+        f_rail=preset["f_c"],
+        omega_rail=preset["omega_rail"],
+        rail_speed_drop=preset["rail_speed_drop"],
+        e_jaw=preset["e_jaw"],
+        f_jaw=preset["f_jaw"],
+        omega_jaw=preset["omega_jaw"],
+    )
+    circular = PyramidCircularCushion(
+        e_jaw=max(0.45, preset["e_jaw"] - 0.01),
+        f_jaw=preset["f_jaw"],
+        omega_jaw=preset["omega_jaw"],
+    )
+    return PhysicsEngine(
+        resolver=attrs.evolve(
+            DEFAULT_ENGINE.resolver,
+            ball_linear_cushion=linear,
+            ball_circular_cushion=circular,
+        )
+    )
 
 # Events the UI cares about (ripples, pot animation, outcome).
 _EVENT_TYPES = {
@@ -75,8 +230,9 @@ def simulate(positions: dict[str, tuple[float, float]], cue_params: dict,
     system = build_system(
         positions, cue_params, physics_preset=physics_preset, cue_ball_id=cue_ball_id
     )
+    engine = physics_engine(physics_preset)
     try:
-        pt.simulate(system, inplace=True, continuous=True, dt=_FRAME_DT)
+        pt.simulate(system, engine=engine, inplace=True, continuous=True, dt=_FRAME_DT)
     except Exception as exc:  # numba asserts, degenerate overlaps, ...
         raise ShotError(f"pooltool could not simulate this shot: {exc}") from exc
     return _pack(system, cue_ball_id=cue_ball_id)
@@ -156,7 +312,9 @@ _TARGET_DT = 1 / 60  # sample rate of the aim-preview trajectories
 _RESTING = (pt.constants.stationary, pt.constants.spinning, pt.constants.pocketed)
 
 
-def _simulate_until_settled(system: pt.System, cue_ball_id: str) -> None:
+def _simulate_until_settled(
+    system: pt.System, cue_ball_id: str, engine: PhysicsEngine | None = None
+) -> None:
     """Simulate only as long as the aim preview needs.
 
     Stops as soon as the cue ball and the first ball it strikes are both at
@@ -165,13 +323,14 @@ def _simulate_until_settled(system: pt.System, cue_ball_id: str) -> None:
     later knock-on by some other still-rolling ball is deliberately ignored.
     Falls back to a full simulation if pooltool's internals ever move.
     """
+    active_engine = engine or physics_engine()
     try:
         from pooltool.events import null_event
-        from pooltool.evolution.event_based.simulate import DEFAULT_ENGINE, _SimulationState
+        from pooltool.evolution.event_based.simulate import _SimulationState
     except ImportError:  # pragma: no cover - pooltool API drift
-        pt.simulate(system, inplace=True)
+        pt.simulate(system, engine=active_engine, inplace=True)
         return
-    sim = _SimulationState(system, DEFAULT_ENGINE)
+    sim = _SimulationState(system, active_engine)
     sim.init()
     watched = [cue_ball_id]
     while not sim.done:
@@ -239,8 +398,9 @@ def predict_target(positions: dict[str, tuple[float, float]], cue_params: dict,
         return out
     system = build_system(positions, cue_params, physics_preset=physics_preset,
                           cue_ball_id=cue_ball_id)
+    engine = physics_engine(physics_preset)
     try:
-        _simulate_until_settled(system, cue_ball_id)
+        _simulate_until_settled(system, cue_ball_id, engine=engine)
         pt.continuize(system, dt=_TARGET_DT, inplace=True)
     except Exception as exc:  # numba asserts, degenerate overlaps, ...
         raise ShotError(f"pooltool could not simulate this shot: {exc}") from exc

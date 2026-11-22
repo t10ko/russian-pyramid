@@ -157,3 +157,30 @@ def test_predict_target_shows_svoyak(warm):
     out = physics.predict_target({"cue": tuple(cue), "1": tuple(obj)}, {"V0": 1.5, "phi": PHI})
     assert out["target"] is None
     assert out["cue"]["potted"] is True and out["cue"]["pocket"] == "rt"
+
+
+def test_pocket_jaws_soft_vs_firm_and_predict_consistency(warm):
+    """Soft jaw grazes roll in, firm jaw grazes deaden near the mouth, and
+    predict_target uses the exact same split rail/jaw engine as simulate."""
+    pos = bisector_positions()
+    soft = {"V0": 1.1, "phi": PHI - 0.08}
+    firm = {"V0": 2.0, "phi": PHI - 0.08}
+
+    soft_shot = physics.simulate(pos, soft)
+    firm_shot = physics.simulate(pos, firm)
+    assert "1" in soft_shot.potted
+    assert "1" not in firm_shot.potted
+    # Softened jaws deaden the rejected ball near the corner mouth ("в губах")
+    end_x, end_y = firm_shot.final_positions["1"]
+    assert math.hypot(config.TABLE_KWARGS["w"] - end_x, config.TABLE_KWARGS["l"] - end_y) < 0.25
+
+    assert physics.predict_target(pos, soft)["potted"] is True
+    assert physics.predict_target(pos, firm)["potted"] is False
+
+
+def test_main_rails_remain_lively(warm):
+    """Main rubber rails keep lively tournament rebound (unlike deadened jaws)."""
+    shot = physics.simulate({"cue": (0.89, 1.20)}, {"V0": 2.5, "phi": 0.0})
+    rail_hits = sum(1 for e in shot.events if e["type"] == "cushion")
+    # At V0 = 2.5 m/s across the 1.78 m width, lively rails rebound across multiple rails
+    assert rail_hits >= 2

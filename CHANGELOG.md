@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.3.0 (2026-11-22)
+
+- **Split rail vs. pocket-jaw softness**: separate Stronge-compliant cushion
+  resolvers keep lively Start Super Pro rubber rebound on the 6 main rails
+  (`e_c = 0.73`, viscoelastic compression on hard banks) while making the 12
+  pocket jaw walls and 12 rounded jaw horns significantly softer (`e_jaw = 0.56`,
+  `omega_jaw = 1.38`), so soft jaw grazes roll in and firmer misses deaden near
+  the mouth (*в губах*) instead of pinballing across the table.
+- **Dual target-ball eye-training dots & independent hint toggles**:
+  - yellow sightline dot on the target ball where the cue line aims alongside
+    the red ball-ball contact dot;
+  - separate checkboxes and shortcuts to toggle the translucent **Ghost ball**
+    (`G`) and **Red dot hint** (`I`);
+  - removed collision and pocket shockwave ring animations for a distraction-free
+    sight picture.
+- **Expanded cue-ball strike zone (`0.72 R`)**: supports realistic deep Russian
+  Pyramid *оттяжка* (draw) and english on the spin pad.
+- **Parked follow-through cue**: after a shot settles, the cue stays resting in
+  its follow-through pose until you click the next ball you want to shoot (or
+  press `C` / `R`), matching Free Pyramid (*Amerikanka*) table flow; clicking
+  balls while a live shot is still rolling no longer aborts the animation.
+- **Input & camera fixes**:
+  - shortcuts now use physical `KeyboardEvent.code` so hotkeys work across
+    Armenian, Russian, and other non-Latin keyboard layouts;
+  - fixed macOS `⌘`+`WASD` / press-and-hold stuck movement keys and swallowed
+    `pointerup` camera drags;
+  - locked the orbit pivot strictly to the playing plane inside the outer rails.
+- **Homebrew Cask tap & local installer**: install via
+  `brew install --cask t10ko/tap/russian-pyramid` (quarantine-free) or rebuild
+  locally with `make install-app`.
+
 ## 0.2.0 (2026-11-19)
 
 - Standalone macOS app with a dedicated window and a drag-to-Applications

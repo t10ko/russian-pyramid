@@ -21,9 +21,12 @@ Everything here was validated empirically against pooltool 0.6:
   The capture radius MUST exceed the depth or the pocket is un-pottable.
 * The mouth is measured between the parallel jaw faces: 72.5 mm for a 68 mm
   ball leaves ~2.25 mm of slack per side on a dead-center entry.
-* e_c / f_c apply to ALL cushions in pooltool (rails and jaws alike), not
-  only to the jaws.  Two presets are provided: ``tournament`` for lively
-  pyramid rails, and ``research`` for the heavily deadened leather-jaw values.
+* Rails and pocket jaws use separate compliance/restitution parameters via a
+  custom Stronge-compliant :class:`pooltool.physics.engine.PhysicsEngine` in
+  :mod:`russian_pyramid.physics`: the 6 main rubber rails rebound cleanly under
+  a 285 g ball (with viscoelastic damping on hard banks), while the 12 pocket
+  jaw walls and 12 rounded jaw horns are significantly softer so jaw grazes
+  absorb pace (or hang *в губах*) instead of pinballing out across the table.
 """
 
 from __future__ import annotations
@@ -109,12 +112,30 @@ CUE_SPECS_KWARGS = dict(
     end_mass=BALL_M / 30,     # shaft end mass scaled to 285 g ball for accurate squirt
 )
 
-# Cushion presets: (coefficient of restitution, tangential friction).
-# "research" holds the deadened leather-jaw values from the original research
-# notes; "tournament" gives realistic rubber rail rebound and cloth friction.
+# Cushion & pocket-jaw presets:
+# - Main rails (e_c, f_c, omega_rail, rail_speed_drop): Start Super Pro rubber
+#   under a 285 g ball, with slight viscoelastic compression on hard impacts.
+# - Pocket jaws & horns (e_jaw, f_jaw, omega_jaw): softer, compliant jaw tips
+#   wrapped in taut worsted cloth so soft grazes roll in and firm misses deaden.
 PHYSICS_PRESETS: dict[str, dict[str, float]] = {
-    "tournament": {"e_c": 0.76, "f_c": 0.24},
-    "research": {"e_c": 0.58, "f_c": 0.40},
+    "tournament": {
+        "e_c": 0.73,
+        "f_c": 0.23,
+        "omega_rail": 1.58,
+        "rail_speed_drop": 0.018,
+        "e_jaw": 0.56,
+        "f_jaw": 0.16,
+        "omega_jaw": 1.38,
+    },
+    "research": {
+        "e_c": 0.66,
+        "f_c": 0.28,
+        "omega_rail": 1.50,
+        "rail_speed_drop": 0.022,
+        "e_jaw": 0.48,
+        "f_jaw": 0.22,
+        "omega_jaw": 1.32,
+    },
 }
 DEFAULT_PHYSICS_PRESET = "tournament"
 
@@ -145,12 +166,16 @@ def build_table(physics_preset: str = DEFAULT_PHYSICS_PRESET) -> pt.Table:
     return pt.Table.from_table_specs(table_specs(physics_preset))
 
 
-def ball_params(physics_preset: str = DEFAULT_PHYSICS_PRESET) -> dict:
+def cushion_preset(physics_preset: str = DEFAULT_PHYSICS_PRESET) -> dict[str, float]:
     try:
-        preset = PHYSICS_PRESETS[physics_preset]
+        return dict(PHYSICS_PRESETS[physics_preset])
     except KeyError:
         raise ValueError(f"unknown physics preset {physics_preset!r}") from None
-    return {**BALL_KWARGS, **preset}
+
+
+def ball_params(physics_preset: str = DEFAULT_PHYSICS_PRESET) -> dict:
+    preset = cushion_preset(physics_preset)
+    return {**BALL_KWARGS, "e_c": preset["e_c"], "f_c": preset["f_c"]}
 
 
 def cue_specs() -> CueSpecs:

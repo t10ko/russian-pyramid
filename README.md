@@ -12,13 +12,13 @@ Russian Pyramid is notorious for its unforgiving equipment: **68 mm (285 g) ball
 
 ### 1. Pocket Acceptance — Jaw Bounce & Drop
 ![Ball bouncing in the corner jaws before dropping](assets/jaw_bounce_pot.gif)
-*A soft-paced shot (`V0 = 1.1 m/s`, `0.05°` off the bisector) into the top-right corner pocket: the ball rattles between the leather jaws, loses energy, and drops in. ([Watch MP4](assets/jaw_bounce_pot.mp4))*
+*A soft-paced shot (`V0 = 1.1 m/s`, `0.08°` off the bisector) into the top-right corner pocket: the soft, cloth-wrapped jaws absorb the sideways kiss and let the ball roll in. ([Watch MP4](assets/jaw_bounce_pot.mp4))*
 
 <br/>
 
-### 2. Pocket Rejection — Jaw Rattle & Spit-Out
-![Ball rattling in the corner jaws and bouncing out](assets/jaw_bounce_reject.gif)
-*The exact same `0.05°`-off corner setup struck firmer (`V0 = 1.8 m/s`): the tight straight jaws reject the pace, rattling the ball before spitting it back onto the table. ([Watch MP4](assets/jaw_bounce_reject.mp4))*
+### 2. Pocket Rejection — Jaw Rattle & Hang (*в губах*)
+![Ball rattling in the corner jaws and hanging in the mouth](assets/jaw_bounce_reject.gif)
+*The exact same `0.08°`-off corner setup struck firmer (`V0 = 1.8 m/s`): the compliant straight jaws reject the pace and deaden the ball right in the pocket mouth (*подставка в губах*). ([Watch MP4](assets/jaw_bounce_reject.mp4))*
 
 <br/>
 
@@ -206,6 +206,8 @@ Physics simulations are computed server-side using [pooltool](https://github.com
 | **Ball** | 68 mm, 285 g | Aramith Tournament Pyramid specification |
 | **Cloth Sliding Friction** | `u_s = 0.20` | Simonis 950 RusPro tournament cloth |
 | **Cloth Rolling Friction** | `u_r = 0.014` | Authentic pyramid cloth roll |
+| **Main Rails (*борта*)** | `e_c = 0.73`, `f_c = 0.23` | Lively rubber rebound with viscoelastic compression on hard banks |
+| **Pocket Jaws (*губы луз*)** | `e_jaw = 0.56`, `f_jaw = 0.16` | Softer compliant jaw noses & walls that absorb pace instead of pinballing |
 | **Ball-to-Ball Restitution** | `e_b = 0.94` | 68 mm phenolic resin restitution |
 | **Ball-to-Ball Friction** | `u_b = 0.055` | Generates realistic cut-induced throw |
 
