@@ -218,9 +218,7 @@ export class Renderer {
     if (this.layer) g.drawImage(this.layer, 0, 0);
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-    if (scene.pocketFlashes) this.drawFlashes(g, scene, view);
     if (scene.trailsOn && scene.trails) this.drawTrails(g, scene, view);
-    if (scene.ripples && scene.ripples.length) this.drawRipples(g, scene, view);
 
     for (const b of scene.balls) {
       if (b.hidden) continue;
@@ -283,10 +281,13 @@ export class Renderer {
   }
 
   drawAim(g, scene, view) {
-    const { cue, lineOrigin, lineEnd, showLine } = scene.aim;
+    const {
+      cue, lineOrigin, lineEnd, showLine, ghost, objBall, aimDot, ballR,
+      showGhost, showContactDot,
+    } = scene.aim;
     if (!cue) return;
 
-    // cue line
+    // cue line + ghost ball + contact/aim dots on target ball
     if (showLine !== false && lineEnd) {
       const start = lineOrigin || cue;
       g.save();
@@ -296,6 +297,39 @@ export class Renderer {
       g.moveTo(view.cx(start[1], start[0]), view.cy(start[1], start[0]));
       g.lineTo(view.cx(lineEnd[1], lineEnd[0]), view.cy(lineEnd[1], lineEnd[0]));
       g.stroke();
+
+      if (ghost && objBall) {
+        if (showGhost !== false) {
+          g.beginPath();
+          g.arc(view.cx(ghost[1], ghost[0]), view.cy(ghost[1], ghost[0]), view.m(ballR), 0, TAU);
+          g.fillStyle = 'rgba(255, 255, 255, 0.14)';
+          g.fill();
+          g.strokeStyle = 'rgba(255, 211, 77, 0.65)';
+          g.lineWidth = Math.max(1, view.m(0.003));
+          g.stroke();
+        }
+        if (showContactDot !== false) {
+          const ox = objBall.xy[0] - ghost[0], oy = objBall.xy[1] - ghost[1];
+          const n = Math.hypot(ox, oy) || 1;
+          const cx = objBall.xy[0] - (ox / n) * ballR;
+          const cy = objBall.xy[1] - (oy / n) * ballR;
+          g.beginPath();
+          g.arc(view.cx(cy, cx), view.cy(cy, cx), Math.max(2.2, view.m(0.0045)), 0, TAU);
+          g.fillStyle = '#ff3b30';
+          g.fill();
+        }
+      }
+
+      if (aimDot) {
+        g.beginPath();
+        g.arc(view.cx(aimDot[1], aimDot[0]), view.cy(aimDot[1], aimDot[0]),
+              Math.max(2.0, view.m(0.0038)), 0, TAU);
+        g.fillStyle = '#ffdd00';
+        g.fill();
+        g.lineWidth = 1;
+        g.strokeStyle = '#1a1408';
+        g.stroke();
+      }
       g.restore();
     }
 
@@ -378,36 +412,6 @@ export class Renderer {
         g.lineTo(view.cx(b[1], b[0]), view.cy(b[1], b[0]));
         g.stroke();
       }
-    }
-  }
-
-  drawRipples(g, scene, view) {
-    const now = scene.now;
-    for (const rp of scene.ripples) {
-      const age = (now - rp.t0) / 0.6;
-      if (age < 0 || age > 1) continue;
-      g.beginPath();
-      g.arc(view.cx(rp.xy[1], rp.xy[0]), view.cy(rp.xy[1], rp.xy[0]),
-            view.m(0.02 + age * 0.07), 0, TAU);
-      g.strokeStyle = rp.kind === 'ball_ball'
-        ? `rgba(242, 201, 76, ${(1 - age) * 0.7})`
-        : `rgba(255, 255, 255, ${(1 - age) * 0.4})`;
-      g.lineWidth = 2;
-      g.stroke();
-    }
-  }
-
-  drawFlashes(g, scene, view) {
-    const now = scene.now;
-    for (const pf of scene.pocketFlashes) {
-      const age = (now - pf.t0) / 0.7;
-      if (age < 0 || age > 1) continue;
-      g.beginPath();
-      g.arc(view.cx(pf.xy[1], pf.xy[0]), view.cy(pf.xy[1], pf.xy[0]),
-            view.m(0.055) * (1 - age * 0.3), 0, TAU);
-      g.strokeStyle = `rgba(212, 165, 55, ${(1 - age) * 0.9})`;
-      g.lineWidth = 3;
-      g.stroke();
     }
   }
 }

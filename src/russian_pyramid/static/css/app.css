@@ -1,6 +1,7 @@
 /* Russian Pyramid — practice table UI */
 
 :root {
+  color-scheme: dark;
   --bg: #0e1216;
   --bg-soft: #151b21;
   --panel: #171e25;
@@ -232,9 +233,87 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 .aim-read b { color: var(--ink); }
 
-.check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin: 7px 0; color: var(--ink); }
-.check input { accent-color: var(--accent); }
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  margin: 7px 0;
+  color: var(--ink);
+  cursor: pointer;
+}
+.check input[type="checkbox"] {
+  accent-color: var(--accent);
+  inline-size: 1.15em;
+  aspect-ratio: 1;
+  margin: 0;
+  cursor: pointer;
+  flex: none;
+}
+.check input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.check input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.check .check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .check small { color: var(--ink-dim); }
+
+@supports not (accent-color: var(--accent)) {
+  .check {
+    position: relative;
+    padding-inline-start: 1.55em;
+  }
+  .check input[type="checkbox"] {
+    position: absolute;
+    clip-path: inset(50%);
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    white-space: nowrap;
+  }
+  .check input[type="checkbox"] + .check-label::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.15em;
+    height: 1.15em;
+    border: 1.5px solid var(--ink-dim);
+    border-radius: 3px;
+    background: var(--bg-soft);
+    box-sizing: border-box;
+  }
+  .check input[type="checkbox"]:focus-visible + .check-label::before {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .check input[type="checkbox"]:checked + .check-label::before {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .check input[type="checkbox"]:checked + .check-label::after {
+    content: "✓";
+    position: absolute;
+    inset-inline-start: 0.16em;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent-ink);
+    font-weight: 700;
+    font-size: 0.85em;
+    line-height: 1;
+  }
+}
 
 .row { display: flex; align-items: center; gap: 8px; }
 .row select { background: var(--bg-soft); color: var(--ink); border: 1px solid var(--panel-edge); border-radius: 6px; padding: 3px 6px; }
@@ -285,13 +364,15 @@ dialog {
   color: var(--ink);
   border: 1px solid var(--panel-edge);
   border-radius: 12px;
-  padding: 22px 26px;
-  max-width: 460px;
+  padding: 18px 24px;
+  max-width: 520px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
 }
 dialog::backdrop { background: rgba(5, 8, 10, 0.6); }
-dialog h2 { margin-top: 0; }
-.keys { border-collapse: collapse; font-size: 13px; }
-.keys td { padding: 5px 10px 5px 0; vertical-align: top; }
+dialog h2 { margin: 0 0 10px; font-size: 18px; }
+.keys { border-collapse: collapse; font-size: 12.5px; }
+.keys td { padding: 3.5px 12px 3.5px 0; vertical-align: top; }
 .keys td:first-child { white-space: nowrap; color: var(--ink-dim); }
 kbd {
   background: #232d37;
@@ -310,14 +391,29 @@ kbd {
   #toasts { right: 16px; }
 }
 
-/* path-preview color swatches next to the toggles */
+/* path-preview & aim-hint color swatches next to the toggles */
 .swatch {
   display: inline-block;
   width: 10px;
   height: 3px;
   border-radius: 2px;
-  margin-right: 6px;
   vertical-align: middle;
 }
 .swatch.target { background: #45d4ff; }
 .swatch.cue { background: #ff5fd2; }
+
+.swatch-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  vertical-align: middle;
+  flex: none;
+}
+.swatch-dot.ghost {
+  background: rgba(255, 255, 255, 0.22);
+  border: 1.5px solid #ffd34d;
+}
+.swatch-dot.contact {
+  background: #ff3b30;
+}

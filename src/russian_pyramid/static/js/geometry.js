@@ -81,14 +81,16 @@ export function sampleFrames(frames, t) {
 
 // First contact of a ball (radius r) traveling from `p` along unit `d`
 // against another ball at `q` (combined radius cr). Returns distance or null.
-export function sweepCircle(p, d, q, cr) {
+// Pass `inclusive = true` when testing a sightline ray against a single ball
+// radius so exact edge/tangent hits (30° half-ball cut) still register.
+export function sweepCircle(p, d, q, cr, inclusive = false) {
   const ex = q[0] - p[0], ey = q[1] - p[1];
   const proj = ex * d[0] + ey * d[1];
   if (proj <= 0) return null;
   const distSq = ex * ex + ey * ey - proj * proj;
   const rSq = cr * cr;
-  if (distSq >= rSq) return null;
-  return proj - Math.sqrt(rSq - distSq);
+  if (inclusive ? distSq > rSq + 1e-12 : distSq >= rSq) return null;
+  return proj - Math.sqrt(Math.max(0, rSq - distSq));
 }
 
 // ---------- pocket geometry (shared by the 3D table and the pot-drop animation)

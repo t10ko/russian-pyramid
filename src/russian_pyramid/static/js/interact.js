@@ -11,6 +11,58 @@ const MOVE_CODES = {
 };
 const MOVE_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e']);
 
+// Physical key codes (`KeyboardEvent.code`) so shortcuts keep working when the
+// OS keyboard layout is Armenian, Russian, or any other non-Latin script.
+const CODE_ACTIONS = {
+  Space: 'space',
+  Escape: 'escape',
+  KeyR: 'r',
+  KeyU: 'u',
+  KeyP: 'p',
+  KeyC: 'c',
+  KeyN: 'n',
+  KeyM: 'm',
+  KeyT: 't',
+  KeyY: 'y',
+  KeyG: 'g',
+  KeyI: 'i',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+};
+
+const KEY_FALLBACK_ACTIONS = {
+  ' ': 'space',
+  Escape: 'escape',
+  r: 'r', R: 'r',
+  u: 'u', U: 'u',
+  p: 'p', P: 'p',
+  c: 'c', C: 'c',
+  n: 'n', N: 'n',
+  m: 'm', M: 'm',
+  t: 't', T: 't',
+  y: 'y', Y: 'y',
+  g: 'g', G: 'g',
+  i: 'i', I: 'i',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+};
+
+function isTextEntry(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const tag = (el.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA') return true;
+  if (tag === 'INPUT') {
+    const type = (el.type || '').toLowerCase();
+    return type !== 'checkbox' && type !== 'range' && type !== 'button' && type !== 'radio';
+  }
+  return false;
+}
+
 export class Interact {
   constructor(wrapper, app) {
     this.wrapper = wrapper;
@@ -75,6 +127,7 @@ export class Interact {
     }
     if (e.button !== 0 || e.ctrlKey || e.metaKey) return; // let OrbitControls pan on Middle / Cmd+drag
     if (!this.onCanvas(e)) return;
+    globalThis.document?.activeElement?.blur?.();
     const xy = this.tablePos(e);
     if (!xy) return;
     this._downAt = { x: e.clientX, y: e.clientY };
@@ -92,7 +145,7 @@ export class Interact {
     // aim mode: plain drag belongs to the camera -- the cue aims immediately at
     // the clicked/dragged target when Shift is held (headless 2D always aims).
     const canAim = this.app.mode === 'aim' && !this.app.isLiveShotRolling() &&
-      (this.app.viewMode === '2d' || e.shiftKey);
+      !this.app.isCueParked() && (this.app.viewMode === '2d' || e.shiftKey);
     if (this.app.hasCue() && canAim) {
       this.dragAim = true;
       this.wrapper.setPointerCapture(e.pointerId);
@@ -193,7 +246,8 @@ export class Interact {
 
   wheel(e) {
     if (!this.onCanvas(e)) return;
-    if (this.app.mode !== 'aim' || this.app.isLiveShotRolling() || !this.app.hasCue()) return;
+    if (this.app.mode !== 'aim' || this.app.isLiveShotRolling() ||
+        this.app.isCueParked() || !this.app.hasCue()) return;
     // the wheel zooms the camera; Shift+wheel (or dragging aim + wheel) sets power
     if (this.app.viewMode === '3d' && !e.shiftKey && !this.dragAim) return;
     e.preventDefault();
@@ -216,43 +270,64 @@ export class Interact {
   }
 
   key(e) {
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-    if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (e.isComposing || isTextEntry(e.target)) return;
+    // Never hijack OS / browser modifier chords (e.g. Ctrl+Space layout switch, Cmd+R reload)
+    if (e.metaKey || e.ctrlKey) return;
+
+    if (!e.altKey) {
       const mk = this._moveKeyFromEvent(e);
       if (mk) {
         this.moveKeys.add(mk);
         return;
       }
     }
+
     const app = this.app;
+    if ((e.code === 'Slash' && e.shiftKey) || e.key === '?' || e.key === '՞') {
+      app.showHelp();
+      return;
+    }
+
+    const action = (e.code && CODE_ACTIONS[e.code]) || KEY_FALLBACK_ACTIONS[e.key] || null;
+    if (!action) return;
+
+    const inSelect = (e.target?.tagName || '').toUpperCase() === 'SELECT';
+    if (inSelect && (action === 'space' || action === 'up' || action === 'down' ||
+                     action === 'left' || action === 'right')) {
+      return;
+    }
+
     const coarse = e.shiftKey;
-    const canEditAim = app.mode === 'aim' && !app.isLiveShotRolling();
+    const canEditAim = app.mode === 'aim' && !app.isLiveShotRolling() && !app.isCueParked();
     // Aim steps (deg).  A corner pocket forgives only ~±5 mm, which on a
     // 1 m + 1 m shot is about ±0.02° of cue direction -- so the default step
     // must be at least that fine.  Alt/Option = ultra-fine, Shift = coarse.
     const aimStep = coarse ? 0.5 : (e.altKey ? 0.005 : 0.02);
-    switch (e.key) {
-      case ' ':
+    switch (action) {
+      case 'space':
         e.preventDefault();
         if (app.mode === 'playback') app.togglePlayback();
         else app.shoot();
         break;
-      case 'Escape':
+      case 'escape':
         if (app.mode === 'playback') app.setMode('aim');
         break;
-      case 'r': case 'R': app.repeatSituation(); break;
-      case 'u': case 'U': app.repeatSituation(); break;
-      case 'p': case 'P': app.replayLast(); break;
-      case 'c': case 'C': app.focusCueBall({ alignAim: true }); break;
-      case 'n': case 'N': app.startFullRack(); break;
-      case 'm': case 'M': app.toggleMode(); break;
-      case 't': case 'T': app.toggleTargetPath(); break;
-      case 'y': case 'Y': app.toggleCuePath(); break;
-      case 'ArrowLeft': if (canEditAim) { e.preventDefault(); app.nudgeAim(-aimStep); } break;
-      case 'ArrowRight': if (canEditAim) { e.preventDefault(); app.nudgeAim(aimStep); } break;
-      case 'ArrowUp': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); } break;
-      case 'ArrowDown': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? -0.5 : -0.1); } break;
-      case '?': app.showHelp(); break;
+      case 'r':
+      case 'u':
+        app.repeatSituation();
+        break;
+      case 'p': app.replayLast(); break;
+      case 'c': app.focusCueBall({ alignAim: true }); break;
+      case 'n': app.startFullRack(); break;
+      case 'm': app.toggleMode(); break;
+      case 't': app.toggleTargetPath(); break;
+      case 'y': app.toggleCuePath(); break;
+      case 'g': app.toggleGhostBall(); break;
+      case 'i': app.toggleContactDot(); break;
+      case 'left': if (canEditAim) { e.preventDefault(); app.nudgeAim(-aimStep); } break;
+      case 'right': if (canEditAim) { e.preventDefault(); app.nudgeAim(aimStep); } break;
+      case 'up': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? 0.5 : 0.1); } break;
+      case 'down': if (canEditAim) { e.preventDefault(); app.nudgePower(coarse ? -0.5 : -0.1); } break;
       default: break;
     }
   }

@@ -127,7 +127,7 @@ DEFAULT_CUE_PARAMS = dict(V0=2.2, phi=90.0, theta=0.0, a=0.0, b=0.0)
 
 V0_MIN, V0_MAX = 0.2, 6.5
 THETA_MAX = 70.0
-SPIN_MAX_RADIUS = 0.50  # real-world miscue limit (~50% of ball radius)
+SPIN_MAX_RADIUS = 0.72  # real-world tip-aim / miscue limit (~72% of ball radius)
 
 # Pocket ids on a pooltool pocket table: corners lb/lt/rb/rt, sides lc/rc.
 CORNER_POCKETS = ("lb", "lt", "rb", "rt")

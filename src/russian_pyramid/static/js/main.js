@@ -8,7 +8,7 @@ import { api } from './api.js';
 import { View, pocketDropSpecs } from './geometry.js';
 import { Renderer } from './render.js';
 import { Renderer3D } from './render3d.js';
-import { Aim, SpinPad, MAX_SPIN_R, V0_MIN, V0_MAX, v0ToPercent, percentToV0, formatShotPower } from './aim.js';
+import { Aim, SpinPad, MAX_SPIN_R, V0_MIN, V0_MAX, v0ToPercent, percentToV0, formatShotPower, resolveSightOverlay } from './aim.js';
 import { Playback } from './playback.js';
 import { Interact } from './interact.js';
 import { $, hideBanner, renderAttempts, setHint, showBanner, toast, updateStats } from './ui.js';
@@ -19,13 +19,11 @@ class App {
     this.view = null;
     this.playback = new Playback();
     this.mode = 'aim';
-    this.ripples = [];
-    this.pocketFlashes = [];
     this.dragPreview = null;
     this.attemptShots = new Map();   // n -> shot payload (client-side replay cache)
     this.activeAttemptN = null;      // currently selected/last attempt for playback
     this._savedLiveAim = null;       // live aim snapshot while in playback mode
-    this._firedEvents = 0;
+    this._parkedCue = null;          // post-shot resting cue pose until next ball/C/R is chosen
     this._aimSyncTimer = null;
     this.busy = false;
     this.shiftHeld = false;
@@ -33,8 +31,10 @@ class App {
     this.cueBallId = 'cue';
     this._framed = false;
 
-    // Physics aim preview (first ball actually touched, its path, the cue
-    // ball's path).  Toggles: T = target-ball path, Y = cue-ball path.
+    // Aim & physics preview toggles (persisted in localStorage):
+    // G = ghost ball, I = red impact dot, T = target-ball path, Y = cue-ball path.
+    this.showGhostBall = loadPref('rp.ghostBall', true);
+    this.showContactDot = loadPref('rp.contactDot', true);
     this.showTargetPath = loadPref('rp.targetPath', false);
     this.showCuePath = loadPref('rp.cuePath', true);
     this.pred = null;                // last server prediction {key, layoutKey, ...}
@@ -88,6 +88,10 @@ class App {
       (this.playback.playing || this._scrubbing || this.playback.time < this.playback.duration - 1e-3);
   }
 
+  isCueParked() {
+    return this.mode === 'aim' && !this.isLiveShotRolling() && !!this._parkedCue;
+  }
+
   staticBalls() {
     const balls = this.state.balls.map((b) => ({
       id: b.id,
@@ -128,8 +132,9 @@ class App {
     this._lastFrameTime = performance.now();
     this.wireUI();
 
-    window.addEventListener('keydown', (e) => { if (e.key === 'Shift') this.setShift(true); });
-    window.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.setShift(false); });
+    const isShift = (e) => e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight';
+    window.addEventListener('keydown', (e) => { if (isShift(e)) this.setShift(true); });
+    window.addEventListener('keyup', (e) => { if (isShift(e)) this.setShift(false); });
     window.addEventListener('blur', () => this.setShift(false));
 
     if (this.viewMode === '3d') this.ensure3d();
@@ -223,9 +228,6 @@ class App {
       }
       this.playback.pause();
       this.playback.seek(+e.target.value);
-      this._firedEvents = 0;
-      this.ripples = [];
-      this.pocketFlashes = [];
       this.syncPlayButton();
       const displayTime = Math.max(0, this.playback.time);
       $('pl-time').textContent =
@@ -243,6 +245,10 @@ class App {
       });
     });
 
+    $('ghost-ball').checked = this.showGhostBall;
+    $('ghost-ball').addEventListener('change', (e) => this.setGhostBall(e.target.checked));
+    $('contact-dot').checked = this.showContactDot;
+    $('contact-dot').addEventListener('change', (e) => this.setContactDot(e.target.checked));
     $('target-path').checked = this.showTargetPath;
     $('target-path').addEventListener('change', (e) => this.setTargetPath(e.target.checked));
     $('cue-path').checked = this.showCuePath;
@@ -250,6 +256,18 @@ class App {
   }
 
   // ---------- physics aim preview ----------
+
+  setGhostBall(on) {
+    this.showGhostBall = !!on;
+    $('ghost-ball').checked = this.showGhostBall;
+    savePref('rp.ghostBall', this.showGhostBall);
+  }
+
+  setContactDot(on) {
+    this.showContactDot = !!on;
+    $('contact-dot').checked = this.showContactDot;
+    savePref('rp.contactDot', this.showContactDot);
+  }
 
   setTargetPath(on) {
     this.showTargetPath = !!on;
@@ -261,6 +279,16 @@ class App {
     this.showCuePath = !!on;
     $('cue-path').checked = this.showCuePath;
     savePref('rp.cuePath', this.showCuePath);
+  }
+
+  toggleGhostBall() {
+    this.setGhostBall(!this.showGhostBall);
+    toast(this.showGhostBall ? 'ghost ball on' : 'ghost ball off');
+  }
+
+  toggleContactDot() {
+    this.setContactDot(!this.showContactDot);
+    toast(this.showContactDot ? 'red impact dot on' : 'red impact dot off');
   }
 
   toggleTargetPath() {
@@ -297,30 +325,43 @@ class App {
   }
 
   // Swap the straight-line ghost ball for the physical first contact
-  // (squirt / swerve can make the cue ball touch a different ball -- or none).
+  // (squirt / swerve can make the cue ball touch a different ball -- or none),
+  // then resolve the yellow sightline dot (`aimDot`) and visible `lineEnd`.
   applyPhysicsContact(aim, pred) {
-    if (!pred) return aim;
-    const lineAt = (p) => {
-      const t = (p[0] - aim.lineOrigin[0]) * aim.dir[0] + (p[1] - aim.lineOrigin[1]) * aim.dir[1];
-      return [aim.lineOrigin[0] + aim.dir[0] * t, aim.lineOrigin[1] + aim.dir[1] * t];
-    };
-    if (pred.contact && pred.target) {
-      const ghost = pred.contact.cue;
-      const objXY = pred.contact.target;
-      const n = Math.hypot(objXY[0] - ghost[0], objXY[1] - ghost[1]) || 1;
-      return {
-        ...aim,
-        ghost,
-        objBall: { id: pred.target, xy: objXY },
-        objDir: [(objXY[0] - ghost[0]) / n, (objXY[1] - ghost[1]) / n],
-        lineEnd: lineAt(ghost),
-        physicsContact: true,
+    let next = aim;
+    if (pred) {
+      const lineAt = (p) => {
+        const t = (p[0] - aim.lineOrigin[0]) * aim.dir[0] + (p[1] - aim.lineOrigin[1]) * aim.dir[1];
+        return [aim.lineOrigin[0] + aim.dir[0] * t, aim.lineOrigin[1] + aim.dir[1] * t];
       };
+      if (pred.contact && pred.target) {
+        const ghost = pred.contact.cue;
+        const objXY = pred.contact.target;
+        const n = Math.hypot(objXY[0] - ghost[0], objXY[1] - ghost[1]) || 1;
+        next = {
+          ...aim,
+          ghost,
+          ghostLineEnd: lineAt(ghost),
+          objBall: { id: pred.target, xy: objXY },
+          objDir: [(objXY[0] - ghost[0]) / n, (objXY[1] - ghost[1]) / n],
+          physicsContact: true,
+        };
+      } else if (!pred.target) {
+        next = {
+          ...aim,
+          ghost: null,
+          ghostLineEnd: aim.wallEnd,
+          objBall: null,
+          objDir: null,
+          physicsContact: true,
+        };
+      }
     }
-    if (!pred.target) {
-      return { ...aim, ghost: null, objBall: null, objDir: null, lineEnd: aim.wallEnd, physicsContact: true };
-    }
-    return aim;
+    return {
+      ...resolveSightOverlay(next, this.showGhostBall),
+      showGhost: this.showGhostBall,
+      showContactDot: this.showContactDot,
+    };
   }
 
   setCameraPreset(preset) {
@@ -355,7 +396,7 @@ class App {
   }
 
   syncShotPanelLock() {
-    const locked = this.mode === 'playback' || this.isLiveShotRolling();
+    const locked = this.mode === 'playback' || this.isLiveShotRolling() || this.isCueParked();
     $('shot-panel').classList.toggle('disabled-panel', locked);
     $('power').disabled = locked;
     $('theta').disabled = locked;
@@ -454,17 +495,20 @@ class App {
 
   async shoot() {
     if (this.busy) return;
-    if (!this.hasCue()) { toast('the cue ball is in the pocket — respawn it first', 'error'); return; }
     // still watching the previous shot? first space skips to its end
     if (this.playback.frames &&
         (this.playback.playing || this.playback.time < this.playback.duration - 1e-3)) {
       this._scrubbing = false;
       this.playback.pause();
       this.playback.seek(this.playback.duration);
-      this._firedEvents = this.playback.events.length;
       this.onShotEnd();
       return;
     }
+    if (this.isCueParked()) {
+      toast('click a ball (or press C / R) for the next shot');
+      return;
+    }
+    if (!this.hasCue()) { toast('the cue ball is in the pocket — respawn it first', 'error'); return; }
     this.busy = true;
     hideBanner();
     try {
@@ -486,16 +530,27 @@ class App {
     if (this.attemptShots.size > 40) {
       this.attemptShots.delete(this.attemptShots.keys().next().value);
     }
-    this.ripples = [];
-    this.pocketFlashes = [];
-    this._firedEvents = 0;
     this.playback.load(payload);
+    if (this.playback.shotCue) {
+      const sc = this.playback.shotCue;
+      const v0 = sc.params?.V0 ?? 2.2;
+      const followMax = Math.min(0.06, 0.015 + 0.008 * v0);
+      this._parkedCue = {
+        xy: [sc.xy[0], sc.xy[1]],
+        params: { ...sc.params },
+        pull: -followMax,
+      };
+    } else {
+      this._parkedCue = null;
+    }
     this.refreshUI();
   }
 
   onShotEnd() {
     this.syncPlayButton();
     this.syncShotPanelLock();
+    this.syncModeButtons();
+    this.updateControls();
     if (this.mode === 'playback') {
       this.refreshUI();
       return;
@@ -590,6 +645,7 @@ class App {
 
   afterSituationChange(msg) {
     this._savedLiveAim = null;
+    this._parkedCue = null;
     if (this.mode === 'playback') this.mode = 'aim';
     this.playback.clear();
     hideBanner();
@@ -612,9 +668,6 @@ class App {
     this.activeAttemptN = n;
     this.mode = 'playback';
     hideBanner();
-    this.ripples = [];
-    this.pocketFlashes = [];
-    this._firedEvents = 0;
     this.playback.load(payload);
     if (!autoPlay) {
       this.playback.pause();
@@ -682,6 +735,7 @@ class App {
   // ---------- camera focus & cue-ball selection ----------
 
   setFocusBall(id, { alignAim = false } = {}) {
+    this._parkedCue = null;
     if (this.mode === 'playback') {
       this.setMode('aim');
     }
@@ -759,11 +813,11 @@ class App {
     }
     const cameraFree = this.mode === 'place'
       ? !this.dragPreview
-      : (this.mode === 'playback' ? true : !this.shiftHeld);
+      : (this.mode === 'playback' || this.isCueParked() ? true : !this.shiftHeld);
     this.r3d.setInteractive(cameraFree);
     wrap.style.cursor = this.mode === 'place'
       ? 'move'
-      : (this.mode === 'aim' && this.shiftHeld ? 'crosshair' : 'grab');
+      : (this.mode === 'aim' && !this.isCueParked() && this.shiftHeld ? 'crosshair' : 'grab');
   }
 
   syncModeButtons() {
@@ -774,6 +828,8 @@ class App {
       setHint('drag balls to move · click cloth to add · right-click to remove · right-drag/WASD moves camera · M to aim');
     } else if (this.mode === 'playback') {
       setHint('Playback mode · space plays/pauses · drag slider to scrub · WASD/right-drag explores · Aim or Esc to exit');
+    } else if (this.isCueParked()) {
+      setHint('click any ball to shoot next · C goes to cue ball · R repeats shot · P replays');
     } else {
       setHint('Shift+click/drag target aims · drag orbits · WASD / right-drag explores table · C returns to cue · space shoots');
     }
@@ -789,6 +845,7 @@ class App {
     }
     const wasPlayback = this.mode === 'playback';
     this.mode = mode;
+    this._parkedCue = null;
     if (wasPlayback) {
       if (this._savedLiveAim) {
         Object.assign(this.aim, this._savedLiveAim);
@@ -809,32 +866,6 @@ class App {
 
   // ---------- render loop ----------
 
-  fireEvents() {
-    if (!this.playback.frames) return;
-    const evs = this.playback.events;
-    while (this._firedEvents < evs.length &&
-           evs[this._firedEvents].t <= this.playback.time + 1e-6) {
-      const e = evs[this._firedEvents++];
-      const now = performance.now() / 1000;
-      if (e.type === 'pocket') {
-        const pos = this.playback.positionsAt(e.t);
-        for (const id of e.balls) {
-          const p = pos[id];
-          if (p) this.pocketFlashes.push({ xy: nearestPocketCenter(p, this), t0: now });
-        }
-      } else {
-        const pos = this.playback.positionsAt(e.t);
-        for (const id of e.balls) {
-          const p = pos[id];
-          if (p) this.ripples.push({ xy: p, t0: now, kind: e.type });
-        }
-      }
-    }
-    const now = performance.now() / 1000;
-    this.ripples = this.ripples.filter((r) => now - r.t0 < 0.7);
-    this.pocketFlashes = this.pocketFlashes.filter((f) => now - f.t0 < 0.8);
-  }
-
   buildScene() {
     const inPlayback = this.mode === 'playback' && !!this.playback.frames;
     const liveRolling = this.isLiveShotRolling();
@@ -847,7 +878,8 @@ class App {
     }
     const cue = balls.find((b) => b.isCue && !b.hidden);
     let aim = null;
-    const aiming = !!cue && !playing && this.mode === 'aim' && !this.dragPreview;
+    const cueParked = this.mode === 'aim' && !playing && !!this._parkedCue && !this.dragPreview;
+    const aiming = !!cue && !playing && this.mode === 'aim' && !cueParked && !this.dragPreview;
     this.updatePrediction(aiming);
     const pred = aiming ? this.pred : null;
     let targetPath = null, cuePath = null;
@@ -857,7 +889,7 @@ class App {
     if (pred && this.showCuePath && pred.cue?.path?.xyz?.length > 1) {
       cuePath = { key: pred.key, pts: pred.cue.path.xyz, potted: pred.cue.potted };
     }
-    if (cue && !playing && this.mode === 'aim') {
+    if (cue && !playing && this.mode === 'aim' && !cueParked) {
       aim = this.applyPhysicsContact({
         ...this.aim.preview(cue.xy, this.staticBalls()),
         ...this.aim.params(),
@@ -874,18 +906,26 @@ class App {
         showLine: false,
         showSpin: false,
       };
+    } else if (cueParked) {
+      const pc = this._parkedCue;
+      aim = {
+        cue: pc.xy,
+        ballR: this.ballRadius,
+        stick: this.aim.stickGeometry(pc.xy, pc.params, pc.pull),
+        ...pc.params,
+        showLine: false,
+        showSpin: false,
+      };
     }
     return {
       balls,
       playing,
-      focus: this.computeFocus(balls),
+      focus: (cueParked && this._framed) ? null : this.computeFocus(balls),
       aim,
       targetPath,
       cuePath,
       trails: this.playback.trailPts,
       trailsOn: $('trails').checked && playing,
-      ripples: this.ripples,
-      pocketFlashes: this.pocketFlashes,
       now: performance.now() / 1000,
     };
   }
@@ -908,7 +948,6 @@ class App {
     try {
       this.stepFreeCamera(dt);
       this.playback.tick();
-      this.fireEvents();
       const scene = this.buildScene();
       if (this.viewMode === '3d' && this.r3d) {
         // frame the TV camera on the followed ball once we know where it is
@@ -933,15 +972,6 @@ class App {
     this.syncPlaybackControls();
     requestAnimationFrame(() => this.frame());
   }
-}
-
-function nearestPocketCenter(p, app) {
-  let best = null, bestD = Infinity;
-  for (const pk of app.table.pockets) {
-    const d = Math.hypot(pk.center[0] - p[0], pk.center[1] - p[1]);
-    if (d < bestD) { bestD = d; best = pk.center; }
-  }
-  return best || p;
 }
 
 function loadPref(key, fallback) {

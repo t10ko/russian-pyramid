@@ -5,22 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Russian Pyramid — Test Ground</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='22' r='11' fill='%23f2c94c'/%3E%3Ccircle cx='21' cy='42' r='11' fill='%23f5efe0'/%3E%3Ccircle cx='43' cy='42' r='11' fill='%23f5efe0'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/app.css?v=16">
+  <link rel="stylesheet" href="/css/app.css?v=19">
   <script type="importmap">
     {
       "imports": {
         "three": "/vendor/three.module.js",
         "three/addons/": "/vendor/unmapped/",
         "three/addons/controls/": "/vendor/",
-        "/js/aim.js": "/js/aim.js?v=16",
-        "/js/api.js": "/js/api.js?v=16",
-        "/js/geometry.js": "/js/geometry.js?v=16",
-        "/js/interact.js": "/js/interact.js?v=16",
-        "/js/main.js": "/js/main.js?v=16",
-        "/js/playback.js": "/js/playback.js?v=16",
-        "/js/render.js": "/js/render.js?v=16",
-        "/js/render3d.js": "/js/render3d.js?v=16",
-        "/js/ui.js": "/js/ui.js?v=16"
+        "/js/aim.js": "/js/aim.js?v=19",
+        "/js/api.js": "/js/api.js?v=19",
+        "/js/geometry.js": "/js/geometry.js?v=19",
+        "/js/interact.js": "/js/interact.js?v=19",
+        "/js/main.js": "/js/main.js?v=19",
+        "/js/playback.js": "/js/playback.js?v=19",
+        "/js/render.js": "/js/render.js?v=19",
+        "/js/render3d.js": "/js/render3d.js?v=19",
+        "/js/ui.js": "/js/ui.js?v=19"
       }
     }
   </script>
@@ -88,15 +88,26 @@
           <input id="theta" type="range" min="0" max="70" step="1">
         </label>
         <div class="aim-read">φ <b id="phi-read"></b></div>
-        <button id="btn-shoot" class="btn accent big">Shoot&nbsp;&nbsp;<kbd>space</kbd></button>
+        <button id="btn-shoot" type="button" class="btn accent big">Shoot&nbsp;&nbsp;<kbd>space</kbd></button>
+        <label class="check" title="Translucent ghost ball at the point of impact (G)">
+          <input id="ghost-ball" type="checkbox" checked>
+          <span class="check-label"><span class="swatch-dot ghost" aria-hidden="true"></span>Ghost ball <kbd>G</kbd></span>
+        </label>
+        <label class="check" title="Red contact-point dot on the target ball (I)">
+          <input id="contact-dot" type="checkbox" checked>
+          <span class="check-label"><span class="swatch-dot contact" aria-hidden="true"></span>Red dot hint <kbd>I</kbd></span>
+        </label>
         <label class="check">
-          <input id="trails" type="checkbox" checked> Ball trails
+          <input id="trails" type="checkbox" checked>
+          <span class="check-label">Ball trails</span>
         </label>
         <label class="check" title="Path of the first ball the cue ball actually touches (T)">
-          <input id="target-path" type="checkbox"> <span class="swatch target"></span>Target ball path <kbd>T</kbd>
+          <input id="target-path" type="checkbox">
+          <span class="check-label"><span class="swatch target" aria-hidden="true"></span>Target ball path <kbd>T</kbd></span>
         </label>
         <label class="check" title="Path of the cue ball itself — shows svoyaks, follow/draw, squirt (Y)">
-          <input id="cue-path" type="checkbox" checked> <span class="swatch cue"></span>Cue ball path <kbd>Y</kbd>
+          <input id="cue-path" type="checkbox" checked>
+          <span class="check-label"><span class="swatch cue" aria-hidden="true"></span>Cue ball path <kbd>Y</kbd></span>
         </label>
       </section>
 
@@ -138,6 +149,8 @@
       <tr><td><kbd>R</kbd> / <kbd>U</kbd></td><td>repeat the same situation</td></tr>
       <tr><td><kbd>P</kbd></td><td>replay last shot</td></tr>
       <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>fine aim 0.02° (<kbd>⌥</kbd> = 0.005°, Shift = 0.5°)</td></tr>
+      <tr><td><kbd>G</kbd></td><td>toggle the translucent ghost ball</td></tr>
+      <tr><td><kbd>I</kbd></td><td>toggle the red impact dot hint on the target ball</td></tr>
       <tr><td><kbd>T</kbd></td><td>toggle the predicted path of the first ball the cue ball touches (cyan)</td></tr>
       <tr><td><kbd>Y</kbd></td><td>toggle the cue ball's own predicted path — svoyaks (pink; green ring = drops)</td></tr>
       <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>cue speed</td></tr>
@@ -149,10 +162,10 @@
       12-ft table · 72.5 mm corner mouths, straight jaws, 5.5 mm corridor · 82 mm sides · 68 mm / 285 g balls.
       A straight-in corner pot forgives only about ±5 mm at the mouth — that is the point.
     </p>
-    <button id="help-close" class="btn">Close</button>
+    <button id="help-close" type="button" class="btn">Close</button>
   </dialog>
 
-  <script type="module" src="/js/main.js?v=16"></script>
+  <script type="module" src="/js/main.js?v=19"></script>
   <script>
     // Runtime probe for headless debugging: append ?debug=1 to the URL and a
     // green #debug-out line reports renderer/canvas/rAF status after load.

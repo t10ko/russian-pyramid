@@ -147,7 +147,12 @@ const getEl = (id) => {
   return elements.get(id);
 };
 
-globalThis.window = { devicePixelRatio: 2, addEventListener: () => {} };
+const winListeners = {};
+globalThis.window = {
+  devicePixelRatio: 2,
+  addEventListener: (type, fn) => { (winListeners[type] ??= []).push(fn); },
+  dispatchEvent: (ev) => { for (const fn of winListeners[ev?.type] || []) fn(ev); },
+};
 globalThis.document = {
   getElementById: getEl,
   createElement: (tag) => makeElement(tag),
@@ -270,15 +275,21 @@ if (spinAim.stick.tipZ <= centerAim.stick.tipZ + 0.005 ||
   violations.push('cue stick did not shift in parallel vertically when b != 0');
 }
 
+// deep draw spin (b = -0.68) stays within MAX_SPIN_R (0.72), while (0.9, 0.9) clamps to 0.72
+app.setAim({ a: 0, b: -0.68 }, false);
+if (Math.abs(app.aim.b + 0.68) > 1e-4) {
+  violations.push(`deep draw spin b=-0.68 was prematurely clamped: b=${app.aim.b}`);
+}
 app.setAim({ a: 0.9, b: 0.9 }, false);
 const spinR = Math.hypot(app.aim.a, app.aim.b);
-if (spinR > 0.501) {
-  violations.push(`spin was not clamped to MAX_SPIN_R: r=${spinR.toFixed(3)}`);
+if (spinR > 0.721 || spinR < 0.719) {
+  violations.push(`spin was not clamped to MAX_SPIN_R (0.72): r=${spinR.toFixed(3)}`);
 }
 app.setAim({ a: 0, b: 0 }, false);
 pumpFrames(3);
 
 // shoot with the captured payload, verify potted target ball "1" is visible at start of playback
+const preShotCueXY = app.cueXY().slice();
 await app.shoot();
 const sceneAtShotStart = app.buildScene();
 if (!sceneAtShotStart.balls.some(b => b.id === '1')) {
@@ -301,8 +312,22 @@ while ((app.playback.playing || app.playback.time < app.playback.duration) && fr
 }
 pumpFrames(5);
 
-// repeat the situation (undo), re-render; playback controls remain active for the cached attempt
+// after balls stop, the cue must stay parked at its pre-shot follow-through spot until a ball / C / R is chosen
+{
+  const parkedScene = app.buildScene();
+  if (!app.isCueParked() || !parkedScene.aim?.stick || parkedScene.aim.showLine !== false) {
+    violations.push('cue did not remain parked with aim line hidden after shot ended');
+  }
+  if (Math.hypot(parkedScene.aim.cue[0] - preShotCueXY[0], parkedScene.aim.cue[1] - preShotCueXY[1]) > 1e-5) {
+    violations.push('cue teleported away from pre-shot strike spot before a new ball was chosen');
+  }
+}
+
+// repeat the situation (undo), re-render; unparks cue and keeps playback controls active
 await app.repeatSituation();
+if (app.isCueParked()) {
+  violations.push('repeatSituation did not unpark cue');
+}
 pumpFrames(3);
 if (getEl('pl-play').disabled || getEl('pl-scrub').disabled) {
   violations.push('playback controls became disabled after repeatSituation even though attempt exists');
@@ -403,7 +428,7 @@ app.setCuePath(true);
   }
 }
 
-// verify 3D table + Russian Pyramid pocket geometry builds cleanly
+// verify 3D table + Russian Pyramid pocket geometry + aim dots/checkboxes build cleanly
 const { Renderer3D } = await import(
   pathToFileURL(new URL('../src/russian_pyramid/static/js/render3d.js', import.meta.url).pathname).href
 );
@@ -412,8 +437,130 @@ r3dTest.cloth = 'green';
 r3dTest.ballR = app.ballRadius;
 r3dTest.scene = { add() {} };
 r3dTest._table(app.table);
+r3dTest._overlayGroups();
 if (!r3dTest.tableGroup || r3dTest.tableGroup.children.length < 30) {
   violations.push('3D table pocket/cushion geometry missing meshes');
+}
+if (r3dTest.fxGroup) {
+  violations.push('wave/ripple fxGroup should be removed from Renderer3D');
+}
+
+// verify yellow aim dot vs red contact dot + ghost/red-dot checkboxes in 3D and scene
+{
+  const cueXY = app.cueXY();
+  const objBall = app.staticBalls().find((b) => !b.isCue);
+  if (objBall) {
+    // 1. Dead-straight aim: both yellow aimDot and red contactDot sit on the front pole
+    const straightPhi = Math.atan2(objBall.xy[1] - cueXY[1], objBall.xy[0] - cueXY[0]) * 180 / Math.PI;
+    app.pred = null;
+    app.setAim({ phi: (straightPhi + 360) % 360, a: 0, b: 0 });
+    const scStraight = app.buildScene();
+    if (!scStraight.aim?.aimDot || !scStraight.aim?.ghost) {
+      violations.push('straight aim should produce both ghost ball and yellow aimDot');
+    }
+    r3dTest._syncAim(scStraight);
+    if (!r3dTest.ghostBall.visible || !r3dTest.contactDot.visible || !r3dTest.aimDot.visible) {
+      violations.push('straight aim with defaults should show ghostBall, contactDot, and aimDot');
+    }
+
+    // 2. Cut aim (~15 deg cut on the ball): yellow aimDot and red contactDot are both on the ball, at distinct spots
+    const dist = Math.hypot(objBall.xy[0] - cueXY[0], objBall.xy[1] - cueXY[1]);
+    const halfCutOffset = Math.asin(Math.min(0.9, (0.55 * app.ballRadius) / dist)) * 180 / Math.PI;
+    app.pred = null;
+    app.setAim({ phi: (straightPhi + halfCutOffset + 360) % 360, a: 0, b: 0 });
+    const scCut = app.buildScene();
+    r3dTest._syncAim(scCut);
+    if (!r3dTest.aimDot.visible || !r3dTest.contactDot.visible) {
+      violations.push('cut shot on the ball face should display both yellow aimDot and red contactDot');
+    }
+    const dotSep = r3dTest.aimDot.position.distanceTo(r3dTest.contactDot.position);
+    if (dotSep < 0.004) {
+      violations.push(`yellow aimDot and red contactDot did not separate on a cut shot (sep=${dotSep})`);
+    }
+
+    // 3. Independent checkboxes for Ghost ball and Red dot hint
+    app.setGhostBall(false);
+    const scNoGhost = app.buildScene();
+    r3dTest._syncAim(scNoGhost);
+    if (r3dTest.ghostBall.visible || r3dTest.ghostRing.visible || !r3dTest.contactDot.visible || !r3dTest.aimDot.visible) {
+      violations.push('unchecking Ghost ball should hide ghostBall/ghostRing while keeping red contactDot and yellow aimDot');
+    }
+    app.setContactDot(false);
+    const scNoDots = app.buildScene();
+    r3dTest._syncAim(scNoDots);
+    if (r3dTest.ghostBall.visible || r3dTest.contactDot.visible || !r3dTest.aimDot.visible) {
+      violations.push('unchecking Red dot hint should hide contactDot while keeping yellow aimDot');
+    }
+
+    // 4. Thin cut (> 30 deg, outside ball edge): no yellow aimDot on ball; hiding ghost ball extends lineEnd to wallEnd
+    const thinOffset = Math.asin(Math.min(0.9, (1.45 * app.ballRadius) / dist)) * 180 / Math.PI;
+    app.pred = null;
+    app.setGhostBall(true);
+    app.setContactDot(true);
+    app.setAim({ phi: (straightPhi + thinOffset + 360) % 360, a: 0, b: 0 });
+    const scThinGhostOn = app.buildScene();
+    app.setGhostBall(false);
+    const scThinGhostOff = app.buildScene();
+    if (scThinGhostOn.aim.aimDot !== null) {
+      violations.push('thin cut outside the ball edge should not place a yellow aimDot on the ball');
+    }
+    if (Math.hypot(scThinGhostOff.aim.lineEnd[0] - scThinGhostOff.aim.wallEnd[0],
+                   scThinGhostOff.aim.lineEnd[1] - scThinGhostOff.aim.wallEnd[1]) > 1e-6) {
+      violations.push('with Ghost ball unchecked, thin-cut aim line should continue to sightEnd/wallEnd');
+    }
+    app.setGhostBall(true);
+    app.setContactDot(true);
+  }
+}
+
+// verify Armenian keyboard layout hotkeys work via KeyboardEvent.code, and Ctrl+Space does not shoot
+{
+  const gBefore = app.showGhostBall;
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: 'գ', code: 'KeyG', shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+    target: { tagName: 'BODY' }, preventDefault() {},
+  });
+  if (app.showGhostBall === gBefore) {
+    violations.push('Armenian layout hotkey Գ (KeyG) failed to toggle ghost ball');
+  }
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: 'գ', code: 'KeyG', shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+    target: { tagName: 'BODY' }, preventDefault() {},
+  });
+
+  const iBefore = app.showContactDot;
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: 'ի', code: 'KeyI', shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+    target: { tagName: 'INPUT', type: 'checkbox' }, preventDefault() {},
+  });
+  if (app.showContactDot === iBefore) {
+    violations.push('Armenian layout hotkey Ի (KeyI) failed when focus was on a checkbox');
+  }
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: 'ի', code: 'KeyI', shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+    target: { tagName: 'BODY' }, preventDefault() {},
+  });
+
+  const tBefore = app.showTargetPath;
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: 'տ', code: 'KeyT', shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+    target: { tagName: 'BODY' }, preventDefault() {},
+  });
+  if (app.showTargetPath === tBefore) {
+    violations.push('Armenian layout hotkey Տ (KeyT) failed to toggle target-ball path');
+  }
+  app.setTargetPath(tBefore);
+
+  // Ctrl+Space (macOS input-source switcher) must NOT trigger shoot()
+  const shotsBefore = app.attemptShots.size;
+  globalThis.window.dispatchEvent({
+    type: 'keydown', key: ' ', code: 'Space', shiftKey: false, altKey: false, ctrlKey: true, metaKey: false,
+    target: { tagName: 'BODY' }, preventDefault() {},
+  });
+  await sleep(30);
+  if (app.attemptShots.size !== shotsBefore || app.busy) {
+    violations.push('Ctrl+Space (OS language switch) unexpectedly triggered shoot()');
+  }
 }
 
 // ---------------------------------------------------------------- verdict

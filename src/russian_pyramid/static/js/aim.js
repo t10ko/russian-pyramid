@@ -110,7 +110,9 @@ export class Aim {
     }
     if (!Number.isFinite(wallT)) wallT = Math.hypot(t.w, t.l);
 
-    // nearest ball contact
+    const wallEnd = [lineOrigin[0] + d[0] * wallT, lineOrigin[1] + d[1] * wallT];
+
+    // nearest ball contact (cue ball center sweeping combined radius 2R)
     let hit = null;
     for (const b of balls) {
       if (b.isCue) continue;
@@ -120,9 +122,22 @@ export class Aim {
       }
     }
 
+    // nearest ball surface directly intersected by the cue sightline (radius R)
+    let sightHit = null;
+    for (const b of balls) {
+      if (b.isCue) continue;
+      const dist = sweepCircle(lineOrigin, d, b.xy, R, true);
+      if (dist !== null && dist < wallT && (!sightHit || dist < sightHit.dist)) {
+        sightHit = { dist, ball: b };
+      }
+    }
+    const sightPoint = sightHit
+      ? [lineOrigin[0] + d[0] * sightHit.dist, lineOrigin[1] + d[1] * sightHit.dist]
+      : null;
+    const sightEnd = sightPoint || wallEnd;
+
     const endT = hit ? hit.dist : wallT;
-    const lineEnd = [lineOrigin[0] + d[0] * endT, lineOrigin[1] + d[1] * endT];
-    const wallEnd = [lineOrigin[0] + d[0] * wallT, lineOrigin[1] + d[1] * wallT];
+    const ghostLineEnd = [lineOrigin[0] + d[0] * endT, lineOrigin[1] + d[1] * endT];
 
     let ghost = null, objDir = null, objBall = null;
     if (hit) {
@@ -137,24 +152,59 @@ export class Aim {
     // cue stick: shifted in parallel by (a, b), elevated by theta, pulled back by V0
     const stick = this.stickGeometry(p);
 
-    return {
+    return resolveSightOverlay({
       cue: p,
       dir: d,
       lineOrigin,
       lineStart,
-      lineEnd,
+      ghostLineEnd,
+      sightHit,
+      sightPoint,
+      sightEnd: sightPoint || wallEnd,
       wallEnd,
       ghost,
       objDir,
       objBall,
       ballR: R,
       stick,
-    };
+    }, true);
   }
 }
 
-// Real-world miscue limit (~50% of ball radius; striking further out glances off).
-export const MAX_SPIN_R = 0.50;
+// Compute the yellow sightline aim dot on the target ball (`aimDot` / `aimBall`)
+// and the visible aim-line endpoint (`lineEnd`), taking into account whether
+// the ghost ball overlay is enabled.
+export function resolveSightOverlay(aim, showGhost = true) {
+  let aimDot = null;
+  let aimBall = null;
+  let lineEnd = aim.wallEnd;
+
+  if (aim.objBall) {
+    const tOnObj = sweepCircle(aim.lineOrigin, aim.dir, aim.objBall.xy, aim.ballR, true);
+    const unoccluded = !aim.sightHit ||
+      aim.sightHit.ball.id === aim.objBall.id ||
+      (tOnObj !== null && tOnObj <= aim.sightHit.dist + 1e-6);
+    if (tOnObj !== null && unoccluded) {
+      aimDot = [
+        aim.lineOrigin[0] + aim.dir[0] * tOnObj,
+        aim.lineOrigin[1] + aim.dir[1] * tOnObj,
+      ];
+      aimBall = aim.objBall;
+      lineEnd = aimDot;
+    } else {
+      lineEnd = showGhost ? aim.ghostLineEnd : (aim.sightEnd || aim.wallEnd);
+    }
+  } else if (aim.sightHit && aim.sightPoint) {
+    aimDot = aim.sightPoint;
+    aimBall = aim.sightHit.ball;
+    lineEnd = aim.sightPoint;
+  }
+
+  return { ...aim, aimDot, aimBall, lineEnd };
+}
+
+// Real-world tip-aim / miscue limit (~72% of ball radius; striking further out glances off).
+export const MAX_SPIN_R = 0.72;
 
 // Realistic Russian Pyramid cue speed bounds (700 g cue striking a 285 g ball).
 export const V0_MIN = 0.20;
@@ -298,7 +348,7 @@ export class SpinPad {
     g.beginPath(); g.moveTo(c - r, c); g.lineTo(c + r, c); g.stroke();
     g.beginPath(); g.moveTo(c, c - r); g.lineTo(c, c + r); g.stroke();
 
-    // safe strike zone (miscue limit ring at 50% radius)
+    // safe strike zone (miscue limit ring at 72% radius)
     g.setLineDash([4, 3]);
     g.strokeStyle = 'rgba(0,0,0,0.45)';
     g.lineWidth = 1.25;

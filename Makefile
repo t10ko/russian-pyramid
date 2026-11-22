@@ -1,17 +1,23 @@
 .DEFAULT_GOAL := help
-.PHONY: default help setup start test smoke lint format clean
+.PHONY: default help setup start app install-app test smoke lint format clean
+
+APP_NAME := Russian Pyramid.app
+BUILT_APP := packaging/dist/$(APP_NAME)
+INSTALLED_APP := /Applications/$(APP_NAME)
 
 default: help
 
 help:
 	@echo "Russian Pyramid commands:"
-	@echo "  make setup    Prepare virtualenv and install dependencies"
-	@echo "  make start    Start the Russian Pyramid practice table"
-	@echo "  make test     Run pytest suite and UI smoke tests"
-	@echo "  make smoke    Run headless UI smoke tests"
-	@echo "  make lint     Check code style with ruff"
-	@echo "  make format   Format code with ruff"
-	@echo "  make clean    Remove temporary caches and build artifacts"
+	@echo "  make setup        Prepare virtualenv and install dependencies"
+	@echo "  make start        Start the Russian Pyramid practice table"
+	@echo "  make app          Build standalone macOS app bundle ($(BUILT_APP))"
+	@echo "  make install-app  Build and replace '$(INSTALLED_APP)' cleanly"
+	@echo "  make test         Run pytest suite and UI smoke tests"
+	@echo "  make smoke        Run headless UI smoke tests"
+	@echo "  make lint         Check code style with ruff"
+	@echo "  make format       Format code with ruff"
+	@echo "  make clean        Remove temporary caches and build artifacts"
 
 setup:
 	@bash scripts/setup.sh
@@ -22,6 +28,17 @@ start:
 		exit 1; \
 	fi
 	@.venv/bin/python -m russian_pyramid.cli $(ARGS)
+
+app:
+	@bash packaging/build_macos.sh
+
+install-app: app
+	@osascript -e 'tell application "Russian Pyramid" to quit' 2>/dev/null || true
+	@rm -rf "$(INSTALLED_APP)"
+	@ditto "$(BUILT_APP)" "$(INSTALLED_APP)"
+	@xattr -cr "$(INSTALLED_APP)" 2>/dev/null || true
+	@codesign --verify --deep --strict "$(INSTALLED_APP)"
+	@echo "Installed: $(INSTALLED_APP)"
 
 test:
 	@.venv/bin/pytest

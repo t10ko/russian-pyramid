@@ -23,6 +23,7 @@ const LEATHER = 0x2f1c11;
 const LEATHER_RIM = 0x3d2416;
 const BRASS = 0xc89b3c;
 const AIM_COLOR = 0xffd34d;      // cue-ball aim line + ghost-ball footprint
+const AIM_DOT_COLOR = 0xffdd00;  // sightline aim point on the target ball
 const CONTACT_COLOR = 0xff3b30;  // contact point on the object ball
 const TARGET_COLOR = 0x45d4ff;   // predicted path of the first ball touched
 const CUE_PATH_COLOR = 0xff5fd2;  // predicted cue-ball path (svoyak when it drops)
@@ -304,11 +305,8 @@ export class Renderer3D {
     this.trailGroup = new THREE.Group();
     this.scene.add(this.trailGroup);
 
-    this.fxGroup = new THREE.Group();
-    this.scene.add(this.fxGroup);
-
-    // Aim line: a solid, colored beam from the cue ball to the ghost ball.  A
-    // thin tube reads well up close; the 1 px line under it keeps the aim
+    // Aim line: a solid, colored beam from the cue ball to the ghost ball / target ball.
+    // A thin tube reads well up close; the 1 px line under it keeps the aim
     // visible from far away (WebGL ignores linewidth).
     const aimMat = new THREE.MeshBasicMaterial({
       color: AIM_COLOR, transparent: true, opacity: 0.92, depthWrite: false,
@@ -329,7 +327,7 @@ export class Renderer3D {
 
     // Ghost ball: where the cue ball will sit at the moment of contact, with
     // its footprint on the cloth, plus a red dot on the exact contact point
-    // of the object ball.
+    // and a yellow dot where the cue sightline points on the target ball.
     this.ghostBall = new THREE.Mesh(
       new THREE.SphereGeometry(this.ballR, 32, 20),
       new THREE.MeshBasicMaterial({
@@ -347,11 +345,27 @@ export class Renderer3D {
     );
     this.ghostRing.rotation.x = -Math.PI / 2;
     this.aimGroup.add(this.ghostRing);
+
     this.contactDot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.0042, 16, 12),
+      new THREE.SphereGeometry(0.0045, 16, 12),
       new THREE.MeshBasicMaterial({ color: CONTACT_COLOR }),
     );
+    this.contactDot.renderOrder = 5;
     this.aimGroup.add(this.contactDot);
+
+    this.aimDot = new THREE.Group();
+    const aimDotOutline = new THREE.Mesh(
+      new THREE.SphereGeometry(0.0044, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0x1a1408, side: THREE.BackSide }),
+    );
+    const aimDotCore = new THREE.Mesh(
+      new THREE.SphereGeometry(0.0036, 16, 12),
+      new THREE.MeshBasicMaterial({ color: AIM_DOT_COLOR }),
+    );
+    aimDotOutline.renderOrder = 6;
+    aimDotCore.renderOrder = 6;
+    this.aimDot.add(aimDotOutline, aimDotCore);
+    this.aimGroup.add(this.aimDot);
 
     // Predicted trajectories (physics): first ball touched (T), cue ball (Y)
     this._paths = {};
@@ -504,7 +518,6 @@ export class Renderer3D {
     this._syncPath(this._paths.target, scene.targetPath);
     this._syncPath(this._paths.cue, scene.cuePath);
     this._syncTrails(scene);
-    this._syncFx(scene);
     if (this._camGoal) {
       this.controls.target.lerp(this._camGoal.target, 0.22);
       this.camera.position.lerp(this._camGoal.pos, 0.22);
@@ -645,18 +658,38 @@ export class Renderer3D {
       placeBeam(this.aimBeam, a, b, AIM_BEAM_R);
     }
 
-    // ghost ball + contact point (only when the line ends on a ball)
+    // ghost ball + red contact dot + yellow sightline aim dot
     const hasGhost = showLine && !!aim.ghost && !!aim.objBall;
-    this.ghostBall.visible = hasGhost;
-    this.ghostRing.visible = hasGhost;
-    this.contactDot.visible = hasGhost;
+    const showGhost = hasGhost && aim.showGhost !== false;
+    const showContact = hasGhost && aim.showContactDot !== false;
+    this.ghostBall.visible = showGhost;
+    this.ghostRing.visible = showGhost;
+    this.contactDot.visible = showContact;
     if (hasGhost) {
       const [gx, gy] = aim.ghost;
-      this.ghostBall.position.set(gx, Y0 + ballR, gy);
-      this.ghostRing.position.set(gx, Y0 + 0.0015, gy);
-      const ox = aim.objBall.xy[0] - gx, oy = aim.objBall.xy[1] - gy;
-      const n = Math.hypot(ox, oy) || 1;
-      this.contactDot.position.set(gx + (ox / n) * ballR, Y0 + ballR, gy + (oy / n) * ballR);
+      if (showGhost) {
+        this.ghostBall.position.set(gx, Y0 + ballR, gy);
+        this.ghostRing.position.set(gx, Y0 + 0.0015, gy);
+      }
+      if (showContact) {
+        const [bx, by] = aim.objBall.xy;
+        const ox = bx - gx, oy = by - gy;
+        const n = Math.hypot(ox, oy) || 1;
+        this.contactDot.position.set(bx - (ox / n) * ballR, Y0 + ballR, by - (oy / n) * ballR);
+      }
+    }
+
+    const hasAimDot = showLine && !!aim.aimDot && !!aim.aimBall;
+    this.aimDot.visible = hasAimDot;
+    if (hasAimDot) {
+      const [bx, by] = aim.aimBall.xy;
+      const dx = aim.aimDot[0] - bx;
+      const dy = aim.aimDot[1] - by;
+      const dn = Math.hypot(dx, dy);
+      const nx = dn > 1e-6 ? dx / dn : -(aimDir?.[0] || 0);
+      const ny = dn > 1e-6 ? dy / dn : -(aimDir?.[1] || 1);
+      const rProud = ballR + 0.0009;
+      this.aimDot.position.set(bx + nx * rProud, Y0 + ballR, by + ny * rProud);
     }
 
     // stick: mesh origin is its tip end, so anchor it at the TIP point and
@@ -759,33 +792,6 @@ export class Renderer3D {
         transparent: true, opacity: 0.4,
       });
       this.trailGroup.add(new THREE.Line(geo, mat));
-    }
-  }
-
-  _syncFx(scene) {
-    this.fxGroup.clear();
-    const now = scene.now ?? 0;
-    const rings = [];
-    for (const rp of scene.ripples || []) {
-      const age = (now - rp.t0) / 0.6;
-      if (age < 0 || age > 1) continue;
-      rings.push({ xy: rp.xy, age, color: rp.kind === 'ball_ball' ? 0xf2c94c : 0xffffff,
-                   max: 0.09, alpha: 0.7 });
-    }
-    for (const pf of scene.pocketFlashes || []) {
-      const age = (now - pf.t0) / 0.7;
-      if (age < 0 || age > 1) continue;
-      rings.push({ xy: pf.xy, age, color: 0xd4a537, max: 0.075, alpha: 0.9 });
-    }
-    for (const r of rings) {
-      const mesh = new THREE.Mesh(
-        new THREE.RingGeometry(0.02 + r.age * r.max * 0.7, 0.026 + r.age * r.max, 32),
-        new THREE.MeshBasicMaterial({ color: r.color, transparent: true,
-                                      opacity: (1 - r.age) * r.alpha, side: THREE.DoubleSide }),
-      );
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(r.xy[0], Y0 + 0.004, r.xy[1]);
-      this.fxGroup.add(mesh);
     }
   }
 
