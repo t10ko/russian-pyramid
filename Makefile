@@ -38,6 +38,8 @@ install-app: app
 	@ditto "$(BUILT_APP)" "$(INSTALLED_APP)"
 	@xattr -cr "$(INSTALLED_APP)" 2>/dev/null || true
 	@codesign --verify --deep --strict "$(INSTALLED_APP)"
+	@touch "$(INSTALLED_APP)"
+	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(INSTALLED_APP)" 2>/dev/null || true
 	@echo "Installed: $(INSTALLED_APP)"
 
 test:

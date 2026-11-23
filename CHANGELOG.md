@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 (2026-11-23)
+
+- **New macOS app icon**: stylized cel-shaded Russian Pyramid emblem (brass
+  triangle rack, amber cue ball, ivory base balls, and slotted cue shaft) sized
+  to Apple's native `824×824` HIG squircle grid across all `@1x`/`@2x` Retina
+  resolutions (`16 px`–`1024 px`).
+- **`make install-app` LaunchServices refresh**: automatically registers the
+  installed `/Applications/Russian Pyramid.app` bundle with macOS
+  LaunchServices so updated app metadata and icons take effect cleanly.
+
 ## 0.3.0 (2026-11-22)
 
 - **Split rail vs. pocket-jaw softness**: separate Stronge-compliant cushion

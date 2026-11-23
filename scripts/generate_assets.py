@@ -171,48 +171,35 @@ def ball(draw, pt, m, x, y, cue=False, number=None):
 
 
 def draw_icon():
-    """App icon: three pyramid balls on green felt."""
-    size = 1024
-    dimensions = (size, size)
-    tile = (73, 65, 951, 943)
-    mask = Image.new("L", dimensions)
-    ImageDraw.Draw(mask).rounded_rectangle(tile, radius=192, fill=255)
-    shade = Image.linear_gradient("L").resize(dimensions)
-    img = Image.composite(Image.new("RGB", dimensions, "#063425"),
-                          Image.new("RGB", dimensions, "#20956d"), shade).convert("RGBA")
-    ImageDraw.Draw(img).rounded_rectangle(tile, radius=192, outline="#2d9c75", width=4)
-    img.putalpha(mask)
+    """Compile assets/icon.icns from the master 1024x1024 assets/icon.png squircle."""
+    import shutil
+    import subprocess
+    import tempfile
 
-    radius = 152
-    balls = [(512, 328), (348, 612), (676, 612)]
-    shadows = Image.new("RGBA", dimensions)
-    shadow_draw = ImageDraw.Draw(shadows)
-    for x, y in balls:
-        shadow_draw.ellipse((x - 131, y + 68, x + 156, y + 178), fill=(0, 21, 16, 220))
-    img.alpha_composite(shadows.filter(ImageFilter.GaussianBlur(21)))
+    master_path = ASSETS / "icon.png"
+    icns_path = ASSETS / "icon.icns"
+    master = Image.open(master_path).convert("RGBA")
+    if master.size != (1024, 1024):
+        master = master.resize((1024, 1024), Image.Resampling.LANCZOS)
 
-    diameter = 2 * radius + 1
-    lighting = Image.new("L", (diameter, diameter))
-    values = []
-    for py in range(-radius, radius + 1):
-        for px in range(-radius, radius + 1):
-            x, y = px / radius, py / radius
-            z = math.sqrt(max(0, 1 - x * x - y * y))
-            diffuse = max(0, -0.32 * x - 0.48 * y + 0.82 * z)
-            highlight = max(0, -0.16 * x - 0.25 * y + 0.95 * z) ** 32
-            values.append(round(255 * min(1, 0.20 + 0.72 * diffuse + 0.18 * highlight)))
-    lighting.putdata(values)
-    ball_mask = Image.new("L", lighting.size)
-    ImageDraw.Draw(ball_mask).ellipse((0, 0, diameter - 1, diameter - 1), fill=255)
-    colors = [("#fff2a4", "#b85b08"), ("#fffdef", "#a09879"), ("#fffdef", "#a09879")]
-    for (x, y), (light, dark) in zip(balls, colors, strict=True):
-        ball = Image.composite(Image.new("RGB", lighting.size, light),
-                               Image.new("RGB", lighting.size, dark), lighting)
-        ball.putalpha(ball_mask)
-        img.alpha_composite(ball, (x - radius, y - radius))
-
-    img.save(ASSETS / "icon.icns")
-    print("wrote", ASSETS / "icon.icns")
+    if shutil.which("iconutil"):
+        with tempfile.TemporaryDirectory() as tmp:
+            iconset = Path(tmp) / "AppIcon.iconset"
+            iconset.mkdir()
+            for px in (16, 32, 128, 256, 512):
+                master.resize((px, px), Image.Resampling.LANCZOS).save(
+                    iconset / f"icon_{px}x{px}.png"
+                )
+                master.resize((px * 2, px * 2), Image.Resampling.LANCZOS).save(
+                    iconset / f"icon_{px}x{px}@2x.png"
+                )
+            subprocess.run(
+                ["iconutil", "-c", "icns", str(iconset), "-o", str(icns_path)],
+                check=True,
+            )
+    else:
+        master.save(icns_path)
+    print("wrote", icns_path)
 
 
 if __name__ == "__main__":
